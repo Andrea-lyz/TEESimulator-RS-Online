@@ -13,6 +13,7 @@ import org.bouncycastle.asn1.ASN1Integer
 import org.bouncycastle.asn1.DEROctetString
 import org.bouncycastle.asn1.DERSequence
 import org.matrix.TEESimulator.attestation.DeviceAttestationService
+import org.matrix.TEESimulator.config.BootStateManager
 import org.matrix.TEESimulator.config.ConfigurationManager
 import org.matrix.TEESimulator.logging.SystemLogger
 
@@ -99,7 +100,7 @@ object AndroidDeviceUtils {
         try {
             attestationValueProvider()?.let {
                 SystemLogger.debug("Using $propertyName from TEE attestation: ${it.toHex()}")
-                setProperty(propertyName, it)
+                setBootProperty(propertyName, it)
                 persistToFile(propertyName, it)
                 return it
             }
@@ -109,13 +110,13 @@ object AndroidDeviceUtils {
 
         readFromFile(propertyName, expectedSize)?.let {
             SystemLogger.debug("Using $propertyName from persistent file: ${it.toHex()}")
-            setProperty(propertyName, it)
+            setBootProperty(propertyName, it)
             return it
         }
 
         return generateRandomBytes(expectedSize).also {
             SystemLogger.debug("Using randomly generated $propertyName: ${it.toHex()}")
-            setProperty(propertyName, it)
+            setBootProperty(propertyName, it)
             persistToFile(propertyName, it)
         }
     }
@@ -161,6 +162,14 @@ object AndroidDeviceUtils {
         } catch (e: Exception) {
             SystemLogger.error("Failed to set '$name' property via resetprop.", e)
         }
+    }
+
+    private fun setBootProperty(name: String, bytes: ByteArray) {
+        if (!BootStateManager.shouldSpoofBootProps()) {
+            SystemLogger.info("Skipping system property '$name' because boot prop spoofing is disabled")
+            return
+        }
+        setProperty(name, bytes)
     }
 
     internal fun setProperty(name: String, value: String) {

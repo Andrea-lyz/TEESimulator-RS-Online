@@ -1,3 +1,11 @@
+## Unreleased
+
+### Fixed
+- OnePlus/Oplus ultrasonic fingerprint calibration compatibility: `boot_props_mode=auto` now skips global `ro.boot.*` boot-state spoofing on Oplus-family devices unless explicitly forced.
+- Non-target UIDs now bypass the KeyMint security-level interceptor before parcel parsing, so system/vendor callers outside `target.txt` are fully passed through.
+
+---
+
 ## TEESimulator-RS v6.0.1-251
 
 14 commits since v6.0.0-235. Clears the remaining Duck Detector grant-domain rows (incl. the Android 16 OnePlus report), restores Google Wallet and fingerprint compatibility, and removes the in-module patch-level/bulletin resolvers. Test device (SDK 35) TEE tamper score 28 → 8.

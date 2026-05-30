@@ -71,6 +71,10 @@ class KeyMintSecurityLevelInterceptor(
         callingPid: Int,
         data: Parcel,
     ): TransactionResult {
+        if (ConfigurationManager.shouldSkipUid(callingUid)) {
+            return TransactionResult.ContinueAndSkipPost
+        }
+
         when (code) {
             GENERATE_KEY_TRANSACTION -> {
                 logTransaction(txId, transactionNames[code]!!, callingUid, callingPid)
@@ -443,11 +447,6 @@ class KeyMintSecurityLevelInterceptor(
                 var params = data.createTypedArray(KeyParameter.CREATOR)!!
                 var parsedParams = KeyMintAttestation(params)
                 val isAttestKeyRequest = parsedParams.isAttestKey()
-
-                if (ConfigurationManager.shouldSkipUid(callingUid)
-                    && attestationKey == null && !isAttestKeyRequest) {
-                    return TransactionResult.ContinueAndSkipPost
-                }
 
                 SystemLogger.trace { "[TRACE-$txId] generateKey alias=${keyDescriptor.alias} algo=${parsedParams.algorithm} challenge=${parsedParams.attestationChallenge?.size ?: "null"} serial=${parsedParams.serial != null} imei=${parsedParams.imei != null} noAuth=${parsedParams.noAuthRequired} purposes=${parsedParams.purpose}" }
                 if (SystemLogger.isDebugBuild) params.forEach { p ->
