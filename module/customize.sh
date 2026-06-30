@@ -48,7 +48,7 @@ install_file() {
 
 # --- Installation ---
 ui_print "- Extracting module files"
-for file in customize.sh module.prop service.sh post-fs-data.sh sepolicy.rule daemon action.sh action_i18n.sh uninstall.sh vintf_keymint.sh; do
+for file in customize.sh module.prop service.sh sepolicy.rule daemon action.sh action_i18n.sh uninstall.sh; do
   install_file "$file" "$MODPATH"
 done
 
@@ -61,7 +61,7 @@ else
   abort "! Neither service.apk nor classes.dex found"
 fi
 
-chmod 755 "$MODPATH/daemon" "$MODPATH/post-fs-data.sh" "$MODPATH/vintf_keymint.sh"
+chmod 755 "$MODPATH/daemon"
 ui_print ""
 
 ui_print "- Extracting $ARCH libraries"
@@ -108,9 +108,4 @@ rm -f "$CONFIG_DIR/tee_status.txt"
 if [ ! -f "$CONFIG_DIR/hbk" ]; then
   ui_print "- Generating device-unique hardware-bound key seed"
   head -c 32 /dev/random > "$CONFIG_DIR/hbk"
-fi
-
-ui_print "- Installing KeyMint VINTF overlay"
-if ! "$MODPATH/vintf_keymint.sh" "$MODPATH" "$API"; then
-  ui_print "! Failed to generate KeyMint VINTF overlay"
 fi

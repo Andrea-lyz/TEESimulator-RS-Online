@@ -1,10 +1,6 @@
 MODDIR=${0%/*}
 cd $MODDIR
 
-if [ -x "$MODDIR/vintf_keymint.sh" ]; then
-  "$MODDIR/vintf_keymint.sh" "$MODDIR"
-fi
-
 # Fork-based supervisor for instant restart
 ./supervisor ./daemon "$MODDIR" &
 
