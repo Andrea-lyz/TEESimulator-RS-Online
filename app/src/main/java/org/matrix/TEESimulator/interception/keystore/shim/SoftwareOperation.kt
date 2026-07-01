@@ -15,7 +15,11 @@ import android.system.keystore2.KeyParameters
 import java.security.KeyPair
 import java.security.Signature
 import java.security.SignatureException
+import java.security.spec.MGF1ParameterSpec
 import javax.crypto.Cipher
+import javax.crypto.Mac
+import javax.crypto.spec.OAEPParameterSpec
+import javax.crypto.spec.PSource
 import org.matrix.TEESimulator.attestation.KeyMintAttestation
 import org.matrix.TEESimulator.logging.KeyMintParameterLogger
 import org.matrix.TEESimulator.logging.SystemLogger
@@ -31,6 +35,17 @@ private sealed interface CryptoPrimitive {
 }
 
 private object JcaAlgorithmMapper {
+    fun digestName(digest: Int?): String =
+        when (digest) {
+            Digest.SHA_2_224 -> "SHA-224"
+            Digest.SHA_2_256 -> "SHA-256"
+            Digest.SHA_2_384 -> "SHA-384"
+            Digest.SHA_2_512 -> "SHA-512"
+            Digest.SHA1 -> "SHA-1"
+            Digest.MD5 -> "MD5"
+            else -> "SHA-1"
+        }
+
     fun mapSignatureAlgorithm(params: KeyMintAttestation): String {
         val digest =
             when (params.digest.firstOrNull()) {
@@ -80,8 +95,18 @@ private object JcaAlgorithmMapper {
                 PaddingMode.RSA_PKCS1_1_5_SIGN -> "PKCS1Padding"
                 PaddingMode.RSA_OAEP -> "OAEPPadding"
                 else -> "NoPadding"
-            }
+        }
         return "$keyAlgo/$blockMode/$padding"
+    }
+
+    fun oaepSpec(params: KeyMintAttestation): OAEPParameterSpec? {
+        if (params.algorithm != Algorithm.RSA) return null
+        if (params.padding.firstOrNull() != PaddingMode.RSA_OAEP) return null
+
+        val digest = digestName(params.digest.firstOrNull())
+        val mgfDigest = digestName(params.rsaOaepMgfDigest.firstOrNull() ?: Digest.SHA1)
+        val mgfSpec = MGF1ParameterSpec(mgfDigest)
+        return OAEPParameterSpec(digest, "MGF1", mgfSpec, PSource.PSpecified.DEFAULT)
     }
 }
 
@@ -138,8 +163,11 @@ private class CipherPrimitive(
     private val cipher: Cipher =
         Cipher.getInstance(JcaAlgorithmMapper.mapCipherAlgorithm(params)).apply {
             val nonce = params.nonce
-            if (nonce != null && isAead) {
-                init(opMode, cryptoKey, javax.crypto.spec.GCMParameterSpec(128, nonce))
+            val oaepSpec = JcaAlgorithmMapper.oaepSpec(params)
+            if (oaepSpec != null) {
+                init(opMode, cryptoKey, oaepSpec)
+            } else if (nonce != null && isAead) {
+                init(opMode, cryptoKey, javax.crypto.spec.GCMParameterSpec(params.minMacLength ?: 128, nonce))
             } else if (nonce != null) {
                 init(opMode, cryptoKey, javax.crypto.spec.IvParameterSpec(nonce))
             } else {
@@ -169,6 +197,53 @@ private class CipherPrimitive(
     }
 
     override fun abort() {}
+}
+
+private class MacPrimitive(secretKey: javax.crypto.SecretKey, params: KeyMintAttestation) : CryptoPrimitive {
+    private val mac: Mac =
+        Mac.getInstance(
+            when (params.digest.firstOrNull()) {
+                Digest.SHA_2_224 -> "HmacSHA224"
+                Digest.SHA_2_256 -> "HmacSHA256"
+                Digest.SHA_2_384 -> "HmacSHA384"
+                Digest.SHA_2_512 -> "HmacSHA512"
+                Digest.SHA1 -> "HmacSHA1"
+                else -> "HmacSHA256"
+            }
+        ).apply {
+            init(secretKey)
+        }
+
+    override fun update(data: ByteArray?): ByteArray? {
+        if (data != null) mac.update(data)
+        return null
+    }
+
+    override fun finish(data: ByteArray?, signature: ByteArray?): ByteArray {
+        if (data != null) update(data)
+        return mac.doFinal()
+    }
+
+    override fun abort() {}
+}
+
+private class MacVerifier(secretKey: javax.crypto.SecretKey, params: KeyMintAttestation) : CryptoPrimitive {
+    private val signer = MacPrimitive(secretKey, params)
+
+    override fun update(data: ByteArray?): ByteArray? = signer.update(data)
+
+    override fun finish(data: ByteArray?, signature: ByteArray?): ByteArray? {
+        val expected =
+            signature
+                ?: throw ServiceSpecificException(KeystoreErrorCodes.verificationFailed, "MAC to verify is null")
+        val actual = signer.finish(data, null)
+        if (!java.security.MessageDigest.isEqual(actual, expected)) {
+            throw ServiceSpecificException(KeystoreErrorCodes.verificationFailed, "MAC verification failed")
+        }
+        return null
+    }
+
+    override fun abort() = signer.abort()
 }
 
 private class KeyAgreementPrimitive(keyPair: KeyPair) : CryptoPrimitive {
@@ -242,18 +317,42 @@ class SoftwareOperation(
         primitive =
             when (purpose) {
                 KeyPurpose.SIGN -> {
-                    val kp = keyPair ?: throw ServiceSpecificException(
-                        KeystoreErrorCodes.invalidArgument,
-                        "[SoftwareOp TX_ID: $txId] SIGN requested but keyPair is null",
-                    )
-                    Signer(kp, params)
+                    if (params.algorithm == Algorithm.HMAC) {
+                        val key =
+                            secretKey
+                                ?: throw ServiceSpecificException(
+                                    KeystoreErrorCodes.invalidArgument,
+                                    "[SoftwareOp TX_ID: $txId] HMAC SIGN requested but secretKey is null",
+                                )
+                        MacPrimitive(key, params)
+                    } else {
+                        val kp =
+                            keyPair
+                                ?: throw ServiceSpecificException(
+                                    KeystoreErrorCodes.invalidArgument,
+                                    "[SoftwareOp TX_ID: $txId] SIGN requested but keyPair is null",
+                                )
+                        Signer(kp, params)
+                    }
                 }
                 KeyPurpose.VERIFY -> {
-                    val kp = keyPair ?: throw ServiceSpecificException(
-                        KeystoreErrorCodes.invalidArgument,
-                        "[SoftwareOp TX_ID: $txId] VERIFY requested but keyPair is null",
-                    )
-                    Verifier(kp, params)
+                    if (params.algorithm == Algorithm.HMAC) {
+                        val key =
+                            secretKey
+                                ?: throw ServiceSpecificException(
+                                    KeystoreErrorCodes.invalidArgument,
+                                    "[SoftwareOp TX_ID: $txId] HMAC VERIFY requested but secretKey is null",
+                                )
+                        MacVerifier(key, params)
+                    } else {
+                        val kp =
+                            keyPair
+                                ?: throw ServiceSpecificException(
+                                    KeystoreErrorCodes.invalidArgument,
+                                    "[SoftwareOp TX_ID: $txId] VERIFY requested but keyPair is null",
+                                )
+                        Verifier(kp, params)
+                    }
                 }
                 KeyPurpose.ENCRYPT -> {
                     val key: java.security.Key = secretKey ?: keyPair?.public
@@ -404,6 +503,18 @@ internal object KeystoreErrorCodes {
         resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_PURPOSE", -13)
     }
 
+    val incompatibleBlockMode: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_BLOCK_MODE", -8)
+    }
+
+    val incompatiblePaddingMode: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_PADDING_MODE", -11)
+    }
+
+    val incompatibleDigest: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_DIGEST", -12)
+    }
+
     val unsupportedPurpose: Int by lazy {
         resolveField("android.hardware.security.keymint.ErrorCode", "UNSUPPORTED_PURPOSE", -14)
     }
@@ -422,6 +533,10 @@ internal object KeystoreErrorCodes {
 
     val callerNonceProhibited: Int by lazy {
         resolveField("android.hardware.security.keymint.ErrorCode", "CALLER_NONCE_PROHIBITED", -55)
+    }
+
+    val invalidMacLength: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "INVALID_MAC_LENGTH", -57)
     }
 
     val unknownError: Int by lazy {
