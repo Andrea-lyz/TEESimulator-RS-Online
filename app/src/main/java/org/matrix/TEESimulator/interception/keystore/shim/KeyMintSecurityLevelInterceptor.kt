@@ -374,7 +374,8 @@ class KeyMintSecurityLevelInterceptor(
                 blockMode = parsedParams.blockMode.ifEmpty { keyParams.blockMode },
                 padding = parsedParams.padding.ifEmpty { keyParams.padding },
                 nonce = parsedParams.nonce,
-                minMacLength = parsedParams.minMacLength ?: keyParams.minMacLength,
+                minMacLength = parsedParams.minMacLength,
+                rsaOaepMgfDigest = parsedParams.rsaOaepMgfDigest.ifEmpty { keyParams.rsaOaepMgfDigest },
             )
         } else parsedParams
 
