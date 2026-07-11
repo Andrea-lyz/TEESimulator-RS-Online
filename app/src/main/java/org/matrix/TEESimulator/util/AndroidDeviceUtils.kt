@@ -453,7 +453,7 @@ object AndroidDeviceUtils {
      * @return The appropriate attestation version number.
      */
     fun getAttestVersion(securityLevel: Int): Int {
-        vintfKeyMintVersions[securityLevel]?.let { version ->
+        vintfKeyMintVersions[TEE_SECURITY_LEVEL]?.let { version ->
             SystemLogger.debug(
                 "attestVersion=${version.attestationVersion} source=vintf securityLevel=$securityLevel"
             )
@@ -485,7 +485,7 @@ object AndroidDeviceUtils {
      * @return The appropriate Keymaster or KeyMint version number.
      */
     fun getKeymasterVersion(securityLevel: Int): Int {
-        vintfKeyMintVersions[securityLevel]?.let { version ->
+        vintfKeyMintVersions[TEE_SECURITY_LEVEL]?.let { version ->
             SystemLogger.debug(
                 "keymasterVersion=${version.keymasterVersion} source=vintf securityLevel=$securityLevel"
             )
