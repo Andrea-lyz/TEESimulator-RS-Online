@@ -73,8 +73,15 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
     private const val GRANT_PUBLIC_API_SDK = 36
     private val deletedSoftwareKeys: MutableSet<KeyIdentifier> = ConcurrentHashMap.newKeySet()
     private val userUpdatedKeys = ConcurrentHashMap.newKeySet<KeyIdentifier>()
+    private data class PendingPatchGrant(
+        val ownerKeyId: KeyIdentifier,
+        val granteeUid: Int,
+        val accessVector: Int,
+    )
+    private val pendingPatchGrants = ConcurrentHashMap<Long, PendingPatchGrant>()
 
     fun forgetDeletedKey(keyId: KeyIdentifier) {
+        userUpdatedKeys.remove(keyId)
         if (deletedSoftwareKeys.remove(keyId)) {
             SystemLogger.debug("Cleared deletion marker for ${keyId.alias}")
         }
@@ -233,6 +240,14 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             // is
             // empty and this falls through to the real keystore2.
             if (code == GET_KEY_ENTRY_TRANSACTION && descriptor.domain == Domain.GRANT) {
+                val knownGrant =
+                    KeyMintSecurityLevelInterceptor.softwareGrants[descriptor.nspace]
+                if (knownGrant != null && knownGrant.granteeUid != callingUid) {
+                    return InterceptorUtils.createErrorReply(RESPONSE_KEY_NOT_FOUND)
+                }
+                if (knownGrant != null && userUpdatedKeys.contains(knownGrant.ownerKeyId)) {
+                    return TransactionResult.ContinueAndSkipPost
+                }
                 val grant =
                     KeyMintSecurityLevelInterceptor.resolveGrant(descriptor.nspace, callingUid)
                 if (grant == null) {
@@ -280,6 +295,7 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                     } else null
 
                 if (keyId != null) {
+                    userUpdatedKeys.remove(keyId)
                     val isSoftwareKey =
                         KeyMintSecurityLevelInterceptor.generatedKeys.containsKey(keyId)
                     KeyMintSecurityLevelInterceptor.cleanupKeyData(keyId)
@@ -389,6 +405,11 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             if (Build.VERSION.SDK_INT < GRANT_PUBLIC_API_SDK) {
                 return InterceptorUtils.createErrorReply(RESPONSE_PERMISSION_DENIED)
             }
+            if (!KeyMintSecurityLevelInterceptor.generatedKeys.containsKey(ownerKeyId)) {
+                pendingPatchGrants[txId] =
+                    PendingPatchGrant(ownerKeyId, granteeUid, accessVector)
+                return TransactionResult.Continue
+            }
             val grantId =
                 KeyMintSecurityLevelInterceptor.issueGrant(ownerKeyId, granteeUid, accessVector)
             val reply =
@@ -413,6 +434,10 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             // Same version gate as grant(): denied pre-36, revoke the virtualized grant on 36+.
             if (Build.VERSION.SDK_INT < GRANT_PUBLIC_API_SDK) {
                 return InterceptorUtils.createErrorReply(RESPONSE_PERMISSION_DENIED)
+            }
+            if (!KeyMintSecurityLevelInterceptor.generatedKeys.containsKey(ownerKeyId)) {
+                KeyMintSecurityLevelInterceptor.revokeGrant(ownerKeyId, granteeUid)
+                return TransactionResult.ContinueAndSkipPost
             }
             KeyMintSecurityLevelInterceptor.revokeGrant(ownerKeyId, granteeUid)
             return InterceptorUtils.createSuccessReply(writeResultCode = false)
@@ -443,12 +468,34 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
     ): TransactionResult {
         if (target != keystoreService || reply == null) return TransactionResult.SkipTransaction
         if (InterceptorUtils.hasException(reply)) {
+            pendingPatchGrants.remove(txId)
             val normalized = InterceptorUtils.normalizeServiceSpecificReply(reply)
             return if (normalized != null) TransactionResult.OverrideReply(normalized)
             else TransactionResult.SkipTransaction
         }
 
-        if (code == GET_NUMBER_OF_ENTRIES_TRANSACTION) {
+        if (code == GRANT_TRANSACTION) {
+            val pending = pendingPatchGrants.remove(txId) ?: return TransactionResult.SkipTransaction
+            return runCatching {
+                    val descriptor =
+                        reply.readTypedObject(KeyDescriptor.CREATOR)
+                            ?: return@runCatching TransactionResult.SkipTransaction
+                    if (descriptor.domain != Domain.GRANT) {
+                        return@runCatching TransactionResult.SkipTransaction
+                    }
+                    KeyMintSecurityLevelInterceptor.recordGrant(
+                        descriptor.nspace,
+                        pending.ownerKeyId,
+                        pending.granteeUid,
+                        pending.accessVector,
+                    )
+                    TransactionResult.SkipTransaction
+                }
+                .getOrElse {
+                    SystemLogger.error("[TX_ID: $txId] Failed to record real grant.", it)
+                    TransactionResult.SkipTransaction
+                }
+        } else if (code == GET_NUMBER_OF_ENTRIES_TRANSACTION) {
             logTransaction(txId, "post-${transactionNames[code]!!}", callingUid, callingPid)
             return runCatching {
                     val hardwareCount = reply.readInt()
@@ -503,7 +550,7 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                     val response = reply.readTypedObject(KeyEntryResponse.CREATOR)!!
                     val keyId = KeyIdentifier(callingUid, keyDescriptor.alias)
 
-                    if (userUpdatedKeys.remove(keyId)) {
+                    if (userUpdatedKeys.contains(keyId)) {
                         SystemLogger.trace {
                             "[TRACE-$txId] getKeyEntry $keyId: userUpdated=true, skipping patch"
                         }
@@ -691,17 +738,10 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
         when {
             descriptor.alias != null -> KeyIdentifier(callingUid, descriptor.alias)
             descriptor.domain == Domain.KEY_ID ->
-                KeyMintSecurityLevelInterceptor.findGeneratedKeyByKeyId(
-                        callingUid,
-                        descriptor.nspace,
-                    )
-                    ?.let { info ->
-                        KeyMintSecurityLevelInterceptor.generatedKeys.entries
-                            .firstOrNull {
-                                it.value.nspace == info.nspace && it.key.uid == callingUid
-                            }
-                            ?.key
-                    }
+                KeyMintSecurityLevelInterceptor.findKeyIdentifierByKeyId(
+                    callingUid,
+                    descriptor.nspace,
+                )
             else -> null
         }
 
@@ -726,6 +766,13 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                 ?: return TransactionResult.ContinueAndSkipPost
 
         if (descriptor.domain == Domain.GRANT) {
+            val knownGrant = KeyMintSecurityLevelInterceptor.softwareGrants[descriptor.nspace]
+            if (knownGrant != null && knownGrant.granteeUid != callingUid) {
+                return InterceptorUtils.createErrorReply(RESPONSE_KEY_NOT_FOUND)
+            }
+            if (knownGrant != null && userUpdatedKeys.contains(knownGrant.ownerKeyId)) {
+                return TransactionResult.ContinueAndSkipPost
+            }
             val grant =
                 KeyMintSecurityLevelInterceptor.resolveGrant(descriptor.nspace, callingUid)
             if (grant == null) {
@@ -737,6 +784,12 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             }
             if ((grant.accessVector and KEY_PERMISSION_UPDATE) == 0) {
                 return InterceptorUtils.createErrorReply(RESPONSE_PERMISSION_DENIED)
+            }
+
+            if (!KeyMintSecurityLevelInterceptor.generatedKeys.containsKey(grant.ownerKeyId)) {
+                KeyMintSecurityLevelInterceptor.evictTeeResponse(grant.ownerKeyId)
+                userUpdatedKeys.add(grant.ownerKeyId)
+                return TransactionResult.ContinueAndSkipPost
             }
 
             val generatedKeyInfo =

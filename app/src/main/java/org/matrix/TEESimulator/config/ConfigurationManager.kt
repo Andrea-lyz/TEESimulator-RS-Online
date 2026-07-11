@@ -80,7 +80,13 @@ object ConfigurationManager {
      */
     fun getKeyboxFileForUid(uid: Int): String {
         val packages = getPackagesForUid(uid)
-        return packages.firstNotNullOfOrNull { pkg -> packageKeyboxes[pkg] } ?: DEFAULT_KEYBOX_FILE
+        val keyboxes = packages.mapNotNull { pkg -> packageKeyboxes[pkg] }.distinct()
+        if (keyboxes.size > 1) {
+            SystemLogger.warning(
+                "Conflicting keybox mappings for shared uid=$uid packages=${packages.joinToString()}; using default"
+            )
+        }
+        return keyboxes.singleOrNull() ?: DEFAULT_KEYBOX_FILE
     }
 
     fun shouldPatch(uid: Int): Boolean {
@@ -109,17 +115,22 @@ object ConfigurationManager {
         val packages = getPackagesForUid(uid)
         if (packages.isEmpty()) return null
 
-        for (pkg in packages) {
-            when (packageModes[pkg]) {
-                Mode.GENERATE -> return Mode.GENERATE
-                Mode.PATCH -> return Mode.PATCH
-                Mode.AUTO ->
-                    return if (DeviceAttestationService.isTeeFunctional) Mode.PATCH
-                    else Mode.GENERATE
-                null -> continue
-            }
+        val resolvedModes =
+            packages
+                .mapNotNull { packageModes[it] }
+                .map { mode ->
+                    if (mode == Mode.AUTO) {
+                        if (DeviceAttestationService.isTeeFunctional) Mode.PATCH else Mode.GENERATE
+                    } else mode
+                }
+                .distinct()
+        if (resolvedModes.size > 1) {
+            SystemLogger.warning(
+                "Conflicting modes for shared uid=$uid packages=${packages.joinToString()}; skipping interception"
+            )
+            return null
         }
-        return null
+        return resolvedModes.singleOrNull()
     }
 
     /**

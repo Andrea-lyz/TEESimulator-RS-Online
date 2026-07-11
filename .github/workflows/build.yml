@@ -16,6 +16,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      version_code: ${{ steps.ver.outputs.version_code }}
 
     steps:
       - uses: actions/checkout@v4
@@ -69,14 +72,25 @@ jobs:
       - name: Read version
         id: ver
         run: |
-          ver=$(grep 'val verName' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
-          count=$(git rev-list HEAD --count)
-          echo "version=${ver}-${count}" >> "$GITHUB_OUTPUT"
+          release=$(basename "$(ls out/TEESimulator-RS-*-Release.zip | head -1)")
+          version=${release#TEESimulator-RS-}
+          version=${version%-Release.zip}
+          version_code=${version##*-}
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${version_code}" >> "$GITHUB_OUTPUT"
 
       - name: List build artifacts
         run: |
           echo "Release: $(ls out/*Release*.zip | head -1) ($(du -h out/*Release*.zip | head -1 | cut -f1))"
           echo "Debug: $(ls out/*Debug*.zip | head -1) ($(du -h out/*Debug*.zip | head -1 | cut -f1))"
+
+      - name: Verify packaged version
+        run: |
+          for archive in out/TEESimulator-RS-*zip; do
+            module_prop=$(unzip -p "$archive" module.prop)
+            grep -qx "version=${{ steps.ver.outputs.version }}" <<< "$module_prop"
+            grep -qx "versionCode=${{ steps.ver.outputs.version_code }}" <<< "$module_prop"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -113,9 +127,8 @@ jobs:
       - name: Read version
         id: ver
         run: |
-          ver=$(grep 'val verName' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
-          count=$(git rev-list HEAD --count)
-          echo "version=${ver}-${count}" >> "$GITHUB_OUTPUT"
+          echo "version=${{ needs.build.outputs.version }}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${{ needs.build.outputs.version_code }}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         with:
@@ -152,10 +165,10 @@ jobs:
 
       - name: Bump update.json
         run: |
-          COUNT=$(git rev-list HEAD --count)
+          COUNT="${{ needs.build.outputs.version_code }}"
           RELEASE_NAME=$(basename zips/*Release*.zip)
           ZIP_URL="https://github.com/${{ github.repository }}/releases/download/${VER}/${RELEASE_NAME}"
-          jq ".versionCode = $COUNT | .zipUrl = \"$ZIP_URL\"" module/update.json > /tmp/update.json
+          jq ".version = \"$VER\" | .versionCode = $COUNT | .zipUrl = \"$ZIP_URL\"" module/update.json > /tmp/update.json
           mv /tmp/update.json module/update.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

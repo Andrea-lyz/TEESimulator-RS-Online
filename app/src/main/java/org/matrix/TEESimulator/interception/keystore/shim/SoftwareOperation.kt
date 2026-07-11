@@ -200,7 +200,11 @@ private class CipherPrimitive(
         Cipher.getInstance(JcaAlgorithmMapper.mapCipherAlgorithm(params)).apply {
             val nonce = params.nonce
             if (nonce != null && isAead) {
-                init(opMode, cryptoKey, javax.crypto.spec.GCMParameterSpec(128, nonce))
+                init(
+                    opMode,
+                    cryptoKey,
+                    javax.crypto.spec.GCMParameterSpec(params.macLength ?: 128, nonce),
+                )
             } else if (nonce != null) {
                 init(opMode, cryptoKey, javax.crypto.spec.IvParameterSpec(nonce))
             } else if (params.padding.firstOrNull() == PaddingMode.RSA_OAEP) {
@@ -300,7 +304,7 @@ private class MacPrimitive(
         // Tag.MAC_LENGTH is optional on the AndroidKeyStore Mac SPI; default to the
         // full digest length so real Mac use keeps working when it is omitted.
         val tagBytes = (params.macLength ?: (full.size * 8)) / 8
-        val tag = full.copyOf(tagBytes)
+        val tag = full.copyOfRange(0, tagBytes)
         if (params.purpose.firstOrNull() == KeyPurpose.VERIFY) {
             if (signature == null) {
                 throw ServiceSpecificException(
@@ -502,6 +506,7 @@ class SoftwareOperation(
     fun finish(data: ByteArray?, signature: ByteArray?): ByteArray? {
         checkActive()
         checkInputLength(data)
+        finalized = true
         try {
             val startNs = if (latencyFloorMs > 0) System.nanoTime() else 0L
             val result = primitive.finish(data, signature)
@@ -510,7 +515,6 @@ class SoftwareOperation(
                 val delayMs = latencyFloorMs - elapsedMs
                 if (delayMs > 0) LockSupport.parkNanos(delayMs * 1_000_000)
             }
-            finalized = true
             onFinishCallback?.invoke()
             SystemLogger.info("[SoftwareOp TX_ID: $txId] Finished operation successfully.")
             return result
@@ -531,6 +535,8 @@ class SoftwareOperation(
     private fun mapToServiceSpecificException(e: Exception): ServiceSpecificException =
         when (e) {
             is SignatureException ->
+                ServiceSpecificException(KeystoreErrorCodes.verificationFailed, e.message)
+            is javax.crypto.AEADBadTagException ->
                 ServiceSpecificException(KeystoreErrorCodes.verificationFailed, e.message)
             is javax.crypto.BadPaddingException ->
                 ServiceSpecificException(KeystoreErrorCodes.invalidArgument, e.message)

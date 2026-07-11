@@ -463,8 +463,16 @@ class KeyMintSecurityLevelInterceptor(
                                     keyParams.rsaOaepMgfDigest
                                 },
                             nonce = parsedParams.nonce,
-                            minMacLength = parsedParams.minMacLength ?: keyParams.minMacLength,
-                            macLength = parsedParams.macLength,
+                            minMacLength = keyParams.minMacLength,
+                            macLength =
+                                parsedParams.macLength
+                                    ?: if (
+                                        keyParams.algorithm == Algorithm.AES &&
+                                            (parsedParams.blockMode.singleOrNull()
+                                                ?: keyParams.blockMode.singleOrNull()) == BlockMode.GCM
+                                    )
+                                        128
+                                    else null,
                         )
                     } else parsedParams
 
@@ -1591,6 +1599,15 @@ class KeyMintSecurityLevelInterceptor(
             return id
         }
 
+        fun recordGrant(
+            grantId: Long,
+            ownerKeyId: KeyIdentifier,
+            granteeUid: Int,
+            accessVector: Int,
+        ) {
+            softwareGrants[grantId] = SoftwareGrant(ownerKeyId, granteeUid, accessVector)
+        }
+
         /** Caller-bound resolve: only the designated grantee, only while the key exists. */
         fun resolveGrant(grantId: Long, callerUid: Int): SoftwareGrant? =
             softwareGrants[grantId]?.takeIf {
@@ -1629,6 +1646,20 @@ class KeyMintSecurityLevelInterceptor(
                 .filter { (keyIdentifier, _) -> keyIdentifier.uid == callingUid }
                 .find { (_, info) -> info.nspace == nspace }
                 ?.value
+        }
+
+        fun findKeyIdentifierByKeyId(callingUid: Int, nspace: Long?): KeyIdentifier? {
+            if (nspace == null || nspace == 0L) return null
+            generatedKeys.entries
+                .firstOrNull { (keyId, info) ->
+                    keyId.uid == callingUid && info.nspace == nspace
+                }
+                ?.let { return it.key }
+            return teeResponses.entries
+                .firstOrNull { (keyId, response) ->
+                    keyId.uid == callingUid && response.metadata?.key?.nspace == nspace
+                }
+                ?.key
         }
 
         /**

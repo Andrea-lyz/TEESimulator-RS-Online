@@ -2,6 +2,7 @@ package org.matrix.TEESimulator.interception.keystore.shim
 
 import android.hardware.security.keymint.Algorithm
 import android.hardware.security.keymint.BlockMode
+import android.hardware.security.keymint.Digest
 import android.hardware.security.keymint.KeyParameter
 import android.hardware.security.keymint.KeyPurpose
 import android.hardware.security.keymint.PaddingMode
@@ -21,6 +22,7 @@ object AuthorizeCreate {
         return checkAlgorithmPurpose(keyParams, purpose)
             ?: checkPurpose(keyParams, purpose)
             ?: checkOperationAuthorizations(keyParams, opParams)
+            ?: checkOperationShape(keyParams, opParams)
             ?: checkTemporalValidity(keyParams, purpose)
             ?: checkCallerNonce(keyParams, purpose, rawOpParams)
     }
@@ -62,14 +64,34 @@ object AuthorizeCreate {
         }
 
         if (keyParams.algorithm == Algorithm.AES && opParams.blockMode.contains(BlockMode.GCM)) {
-            val requestedMacLength = opParams.minMacLength
+            val requestedMacLength = opParams.macLength ?: DEFAULT_GCM_MAC_LENGTH_BITS
             val keyMinMacLength = keyParams.minMacLength
             if (
-                requestedMacLength != null &&
-                    keyMinMacLength != null &&
+                keyMinMacLength != null &&
                     requestedMacLength < keyMinMacLength
             ) {
                 return KeystoreErrorCodes.invalidMacLength
+            }
+            if (requestedMacLength !in 96..128 || requestedMacLength % 8 != 0) {
+                return KeystoreErrorCodes.invalidMacLength
+            }
+        }
+
+        if (keyParams.algorithm == Algorithm.HMAC) {
+            val requestedMacLength = opParams.macLength
+            if (requestedMacLength != null) {
+                val digestBits =
+                    digestSizeBits(opParams.digest.firstOrNull() ?: keyParams.digest.singleOrNull())
+                if (
+                    requestedMacLength <= 0 ||
+                        requestedMacLength % 8 != 0 ||
+                        digestBits == null ||
+                        requestedMacLength > digestBits ||
+                        (keyParams.minMacLength != null &&
+                            requestedMacLength < keyParams.minMacLength)
+                ) {
+                    return KeystoreErrorCodes.invalidMacLength
+                }
             }
         }
 
@@ -83,6 +105,70 @@ object AuthorizeCreate {
 
         return null
     }
+
+    private fun checkOperationShape(
+        keyParams: KeyMintAttestation,
+        opParams: KeyMintAttestation,
+    ): Int? {
+        if (opParams.purpose.size != 1) return KeystoreErrorCodes.invalidArgument
+        if (opParams.blockMode.size > 1) return KeystoreErrorCodes.incompatibleBlockMode
+        if (opParams.padding.size > 1) return KeystoreErrorCodes.incompatiblePaddingMode
+        if (opParams.digest.size > 1 || opParams.rsaOaepMgfDigest.size > 1) {
+            return KeystoreErrorCodes.incompatibleDigest
+        }
+
+        fun missingOrAmbiguous(requested: List<Int>, authorized: List<Int>): Boolean =
+            requested.isEmpty() && authorized.distinct().size != 1
+
+        return when (keyParams.algorithm) {
+            Algorithm.AES ->
+                when {
+                    missingOrAmbiguous(opParams.blockMode, keyParams.blockMode) ->
+                        KeystoreErrorCodes.incompatibleBlockMode
+                    missingOrAmbiguous(opParams.padding, keyParams.padding) ->
+                        KeystoreErrorCodes.incompatiblePaddingMode
+                    else -> null
+                }
+            Algorithm.HMAC ->
+                if (missingOrAmbiguous(opParams.digest, keyParams.digest))
+                    KeystoreErrorCodes.incompatibleDigest
+                else null
+            Algorithm.RSA -> {
+                val padding = opParams.padding.singleOrNull() ?: keyParams.padding.singleOrNull()
+                val needsDigest =
+                    opParams.purpose.single() == KeyPurpose.SIGN || padding == PaddingMode.RSA_OAEP
+                when {
+                    missingOrAmbiguous(opParams.padding, keyParams.padding) ->
+                        KeystoreErrorCodes.incompatiblePaddingMode
+                    needsDigest && missingOrAmbiguous(opParams.digest, keyParams.digest) ->
+                        KeystoreErrorCodes.incompatibleDigest
+                    padding == PaddingMode.RSA_OAEP &&
+                        opParams.rsaOaepMgfDigest.isEmpty() &&
+                        keyParams.rsaOaepMgfDigest.distinct().size > 1 ->
+                        KeystoreErrorCodes.incompatibleDigest
+                    else -> null
+                }
+            }
+            Algorithm.EC ->
+                if (
+                    opParams.purpose.firstOrNull() != KeyPurpose.AGREE_KEY &&
+                        missingOrAmbiguous(opParams.digest, keyParams.digest)
+                )
+                    KeystoreErrorCodes.incompatibleDigest
+                else null
+            else -> KeystoreErrorCodes.incompatibleAlgorithm
+        }
+    }
+
+    private fun digestSizeBits(digest: Int?): Int? =
+        when (digest) {
+            Digest.SHA1 -> 160
+            Digest.SHA_2_224 -> 224
+            Digest.SHA_2_256 -> 256
+            Digest.SHA_2_384 -> 384
+            Digest.SHA_2_512 -> 512
+            else -> null
+        }
 
     private fun checkTemporalValidity(keyParams: KeyMintAttestation, purpose: Int): Int? {
         val now = System.currentTimeMillis()
@@ -117,4 +203,6 @@ object AuthorizeCreate {
             return KeystoreErrorCodes.callerNonceProhibited
         return null
     }
+
+    private const val DEFAULT_GCM_MAC_LENGTH_BITS = 128
 }

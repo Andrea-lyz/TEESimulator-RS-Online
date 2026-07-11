@@ -2,17 +2,22 @@ package org.matrix.TEESimulator.interception.keystore.shim
 
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.security.KeyPair
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.security.cert.Certificate
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
+import javax.crypto.spec.GCMParameterSpec
 import org.matrix.TEESimulator.config.ConfigurationManager.CONFIG_PATH
 import org.matrix.TEESimulator.interception.keystore.KeyIdentifier
 import org.matrix.TEESimulator.logging.SystemLogger
@@ -62,7 +67,8 @@ object GeneratedKeyPersistence {
      * metadata but still missed the symmetric block; never shipped 3 — current: byte-identical
      * KeyMetadata snapshot + raw symmetric key material so AES/HMAC keys survive reboots
      */
-    private const val FORMAT_VERSION = 3
+    private const val FORMAT_VERSION = 4
+    private const val NONCE_SIZE = 12
     private val PERSISTENCE_DIR = File(CONFIG_PATH, "persistent_keys")
 
     // Per-filename locks to prevent concurrent writes to the same key file
@@ -98,11 +104,13 @@ object GeneratedKeyPersistence {
             SystemLogger.debug("[Persistence] Lock acquired for $filename")
             runCatching {
                     PERSISTENCE_DIR.mkdirs()
+                    restrictPermissions(PERSISTENCE_DIR, directory = true)
                     val finalFile = File(PERSISTENCE_DIR, filename)
                     val tmpFile = File(PERSISTENCE_DIR, "$filename.tmp")
 
                     try {
-                        DataOutputStream(BufferedOutputStream(FileOutputStream(tmpFile))).use { out
+                        val payload = ByteArrayOutputStream()
+                        DataOutputStream(BufferedOutputStream(payload)).use { out
                             ->
                             out.writeInt(FORMAT_VERSION)
                             out.writeInt(securityLevel)
@@ -149,6 +157,10 @@ object GeneratedKeyPersistence {
                                 out.writeInt(0)
                             }
                         }
+                        FileOutputStream(tmpFile).use { out ->
+                            out.write(protect(payload.toByteArray()))
+                        }
+                        restrictPermissions(tmpFile, directory = false)
                     } catch (e: Exception) {
                         tmpFile.delete()
                         throw e
@@ -162,6 +174,7 @@ object GeneratedKeyPersistence {
                             "Failed to atomically rename $tmpFile -> $finalFile"
                         )
                     }
+                    restrictPermissions(finalFile, directory = false)
 
                     // Verify write succeeded - catches disk-full or filesystem errors
                     if (!finalFile.exists() || finalFile.length() < 20) {
@@ -237,7 +250,7 @@ object GeneratedKeyPersistence {
 
         for (file in files) {
             runCatching {
-                    DataInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
+                    openVerified(file).use { input ->
                         val version = input.readInt()
                         if (version != FORMAT_VERSION) {
                             // Old upstream files (v1) and dev-only intermediate
@@ -366,7 +379,7 @@ object GeneratedKeyPersistence {
 
         val persisted =
             runCatching {
-                    DataInputStream(BufferedInputStream(FileInputStream(existing))).use { input ->
+                    openVerified(existing).use { input ->
                         val version = input.readInt()
                         if (version != FORMAT_VERSION) {
                             SystemLogger.warning(
@@ -426,6 +439,47 @@ object GeneratedKeyPersistence {
     private fun requireBounds(value: Int, max: Int, name: String): Int {
         require(value in 0..max) { "$name out of bounds: $value (max $max)" }
         return value
+    }
+
+    private fun protect(payload: ByteArray): ByteArray {
+        val nonce = ByteArray(NONCE_SIZE).also { SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.ENCRYPT_MODE,
+            SecretKeySpec(persistenceKey(), "AES"),
+            GCMParameterSpec(128, nonce),
+        )
+        return nonce + cipher.doFinal(payload)
+    }
+
+    private fun openVerified(file: File): DataInputStream {
+        val sealed = file.readBytes()
+        require(sealed.size > NONCE_SIZE + 16) { "Persisted key record is truncated" }
+        val nonce = sealed.copyOfRange(0, NONCE_SIZE)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(persistenceKey(), "AES"),
+            GCMParameterSpec(128, nonce),
+        )
+        val payload = cipher.doFinal(sealed, NONCE_SIZE, sealed.size - NONCE_SIZE)
+        return DataInputStream(BufferedInputStream(ByteArrayInputStream(payload)))
+    }
+
+    private fun persistenceKey(): ByteArray {
+        val key = File(CONFIG_PATH, "hbk").readBytes()
+        require(key.size >= 32) { "HBK is missing or too short" }
+        return MessageDigest.getInstance("SHA-256")
+            .digest(key + "TEESimulator persistent keys v4".toByteArray(Charsets.UTF_8))
+    }
+
+    private fun restrictPermissions(file: File, directory: Boolean) {
+        file.setReadable(false, false)
+        file.setWritable(false, false)
+        file.setExecutable(false, false)
+        file.setReadable(true, true)
+        file.setWritable(true, true)
+        if (directory) file.setExecutable(true, true)
     }
 
     private fun keyFileName(uid: Int, alias: String): String {
