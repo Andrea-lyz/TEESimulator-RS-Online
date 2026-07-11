@@ -586,14 +586,18 @@ object AndroidDeviceUtils {
     }
 
     private fun parseKeyMintVersions(file: File): List<VintfKeyMintVersion> {
-        val factory =
-            DocumentBuilderFactory.newInstance().apply {
-                isXIncludeAware = false
-                isExpandEntityReferences = false
-                setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-                setFeature("http://xml.org/sax/features/external-general-entities", false)
-                setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            }
+        val factory = DocumentBuilderFactory.newInstance()
+        runCatching { factory.isXIncludeAware = false }
+        runCatching { factory.isExpandEntityReferences = false }
+        runCatching {
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        }
+        runCatching {
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false)
+        }
+        runCatching {
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        }
         val document = factory.newDocumentBuilder().parse(file)
         val root = document.documentElement ?: return emptyList()
 
