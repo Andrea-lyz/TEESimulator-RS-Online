@@ -11,6 +11,7 @@ import android.hardware.security.keymint.SecurityLevel
 import android.hardware.security.keymint.Tag
 import android.os.IBinder
 import android.os.Parcel
+import android.os.Process
 import android.system.keystore2.*
 import android.util.Pair as AndroidPair
 import java.io.ByteArrayInputStream
@@ -72,6 +73,13 @@ class KeyMintSecurityLevelInterceptor(
         callingPid: Int,
         data: Parcel,
     ): TransactionResult {
+        // Oplus system services use UID 1000 keys such as StdIdAppKey to authenticate factory
+        // calibration data. Those keys must remain in the real KeyMint: replacing one with a
+        // software key makes the ultrasonic fingerprint TA return result 1036 with an empty hash.
+        if (callingUid == Process.SYSTEM_UID) {
+            return TransactionResult.ContinueAndSkipPost
+        }
+
         when (code) {
             GENERATE_KEY_TRANSACTION -> {
                 logTransaction(txId, transactionNames[code]!!, callingUid, callingPid)
@@ -1159,6 +1167,13 @@ class KeyMintSecurityLevelInterceptor(
         for (record in records) {
             runCatching {
                     val keyId = KeyIdentifier(record.uid, record.alias)
+                    if (record.uid == Process.SYSTEM_UID) {
+                        GeneratedKeyPersistence.delete(keyId)
+                        SystemLogger.warning(
+                            "Discarded persisted software key for system UID: ${record.alias}"
+                        )
+                        return@runCatching
+                    }
                     if (generatedKeys.containsKey(keyId)) {
                         SystemLogger.debug("Skipping already-loaded key: $keyId")
                         return@runCatching
