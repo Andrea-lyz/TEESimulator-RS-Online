@@ -454,6 +454,31 @@ object GeneratedKeyPersistence {
 
     private fun openVerified(file: File): DataInputStream {
         val sealed = file.readBytes()
+        if (sealed.size >= 4 && java.nio.ByteBuffer.wrap(sealed, 0, 4).int == 3) {
+            val payload = sealed.clone()
+            java.nio.ByteBuffer.wrap(payload, 0, 4).putInt(FORMAT_VERSION)
+            val migrationFile = File(file.parentFile, "${file.name}.migrate.tmp")
+            FileOutputStream(migrationFile).use { it.write(protect(payload)) }
+            restrictPermissions(migrationFile, directory = false)
+            runCatching {
+                    java.nio.file.Files.move(
+                        migrationFile.toPath(),
+                        file.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    )
+                }
+                .getOrElse {
+                    java.nio.file.Files.move(
+                        migrationFile.toPath(),
+                        file.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    )
+                }
+            restrictPermissions(file, directory = false)
+            SystemLogger.info("Migrated ${file.name} to encrypted persistence format v4")
+            return DataInputStream(BufferedInputStream(ByteArrayInputStream(payload)))
+        }
         require(sealed.size > NONCE_SIZE + 16) { "Persisted key record is truncated" }
         val nonce = sealed.copyOfRange(0, NONCE_SIZE)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
