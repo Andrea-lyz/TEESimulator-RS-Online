@@ -118,7 +118,7 @@ system=2025-10-01
 
 Controls global `ro.boot.*` property spoofing. Values: `auto` (default), `force`, or `disable`.
 
-In `auto`, Oplus-family devices (OnePlus/OPPO/realme/Oplus) skip boot-state prop spoofing to avoid conflicts with vendor TEE services such as ultrasonic fingerprint calibration. Create `/data/adb/tricky_store/boot_props_mode` with `force` to restore the old behavior, or `disable` to turn it off on any device.
+In `auto`, Oplus-family devices (OnePlus/OPPO/realme/Oplus) skip boot-state prop spoofing to avoid conflicts with vendor TEE services such as ultrasonic fingerprint calibration. Detection also uses Oplus ROM and framework markers, so it still works when a Play Integrity module replaces the public product identity. Create `/data/adb/tricky_store/boot_props_mode` with `force` to restore the old behavior, or `disable` to turn it off on any device.
 
 ## Building from source
 

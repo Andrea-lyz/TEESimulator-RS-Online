@@ -105,10 +105,18 @@ object BootStateManager {
             listOf(
                 "ro.product.manufacturer",
                 "ro.product.brand",
+                "ro.product.system.brand",
+                "ro.product.system_ext.brand",
+                "ro.product.product.brand",
                 "ro.product.vendor.manufacturer",
                 "ro.product.vendor.brand",
                 "ro.product.odm.manufacturer",
                 "ro.product.odm.brand",
+                "ro.build.version.oplusrom",
+                "ro.build.version.oplus.api",
+                "ro.vendor.oplus.market.name",
+                "ro.vendor.oplus.regionmark",
+                "ro.oplus.image.my_product.version",
                 "ro.boot.hardware.sku",
                 "ro.boot.project_name",
             )
@@ -118,6 +126,19 @@ object BootStateManager {
                 SystemProperties.get(name, "")
             }.lowercase()
 
-        return listOf("oneplus", "oplus", "oppo", "realme").any { joined.contains(it) }
+        if (listOf("oneplus", "oplus", "oppo", "realme", "coloros").any { joined.contains(it) }) {
+            return true
+        }
+
+        // Product identity props are commonly replaced by Play Integrity modules. These vendor
+        // partitions/framework markers remain stable and keep the ultrasonic fingerprint TA out
+        // of the global ro.boot.* spoof path even when the phone currently identifies as a Pixel.
+        return listOf(
+                "/my_product",
+                "/oplus_product",
+                "/system_ext/framework/oplus-framework.jar",
+                "/system_ext/framework/oplus-fwk.jar",
+            )
+            .any { File(it).exists() }
     }
 }
