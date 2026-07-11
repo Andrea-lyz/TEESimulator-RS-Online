@@ -59,6 +59,7 @@ data class KeyMintAttestation(
     val maxBootLevel: Int?,
     val minMacLength: Int?,
     val rsaOaepMgfDigest: List<Int>,
+    val macLength: Int? = null,
 ) {
     /** Secondary constructor that populates the fields by parsing an array of `KeyParameter`. */
     constructor(
@@ -135,6 +136,7 @@ data class KeyMintAttestation(
         maxBootLevel = params.findInteger(Tag.MAX_BOOT_LEVEL),
         minMacLength = params.findInteger(Tag.MIN_MAC_LENGTH),
         rsaOaepMgfDigest = params.findAllDigests(Tag.RSA_OAEP_MGF_DIGEST),
+        macLength = params.findInteger(Tag.MAC_LENGTH),
     ) {
         // Log all parsed parameters for debugging purposes.
         params.forEach { KeyMintParameterLogger.logParameter(it) }

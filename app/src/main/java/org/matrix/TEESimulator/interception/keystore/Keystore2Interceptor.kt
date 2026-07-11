@@ -72,6 +72,22 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
     private const val GRANT_PUBLIC_API_SDK = 36
     private val deletedSoftwareKeys: MutableSet<KeyIdentifier> = ConcurrentHashMap.newKeySet()
     private val userUpdatedKeys = ConcurrentHashMap.newKeySet<KeyIdentifier>()
+    private data class PendingPatchGrant(
+        val ownerKeyId: KeyIdentifier,
+        val granteeUid: Int,
+        val accessVector: Int,
+    )
+    private data class PendingPatchGrantUpdate(
+        val grantId: Long,
+        val ownerKeyId: KeyIdentifier,
+    )
+    private data class PendingPatchUngrant(
+        val ownerKeyId: KeyIdentifier,
+        val granteeUid: Int,
+    )
+    private val pendingPatchGrants = ConcurrentHashMap<Long, PendingPatchGrant>()
+    private val pendingPatchGrantUpdates = ConcurrentHashMap<Long, PendingPatchGrantUpdate>()
+    private val pendingPatchUngrants = ConcurrentHashMap<Long, PendingPatchUngrant>()
 
     fun forgetDeletedKey(keyId: KeyIdentifier) {
         if (deletedSoftwareKeys.remove(keyId)) {
@@ -212,7 +228,7 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             if (code == UPDATE_SUBCOMPONENT_TRANSACTION) {
                 if (ConfigurationManager.shouldSkipUid(callingUid))
                     return TransactionResult.ContinueAndSkipPost
-                return handleUpdateSubcomponent(callingUid, data)
+                return handleUpdateSubcomponent(txId, callingUid, data)
             }
 
             data.enforceInterface(IKeystoreService.DESCRIPTOR)
@@ -341,10 +357,9 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                     ?: return TransactionResult.ContinueAndSkipPost
             val granteeUid = data.readInt()
             val accessVector = data.readInt()
-            // Synthetic (generatedKeys) AND patch-mode (teeResponses) keys are ours; both must grant
-            // coherently so the Domain.GRANT readback returns the same chain the owner read returns.
-            // Real hardware keys fall through to the real keystore2, which applies the same SELinux
-            // gate the platform would.
+            // Synthetic keys use a local grant. Patch-mode keys keep a real keystore2 grant and
+            // only map its returned id to the patched owner response until a real subcomponent
+            // update makes the patch cache obsolete.
             val ownerKeyId =
                 resolveOwnerKeyId(key, callingUid)
                     ?.takeIf { KeyMintSecurityLevelInterceptor.ownsKeyResponse(it) }
@@ -356,6 +371,11 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             // returns the owner's chain.
             if (Build.VERSION.SDK_INT < GRANT_PUBLIC_API_SDK) {
                 return InterceptorUtils.createErrorReply(RESPONSE_PERMISSION_DENIED)
+            }
+            if (!KeyMintSecurityLevelInterceptor.generatedKeys.containsKey(ownerKeyId)) {
+                pendingPatchGrants[txId] =
+                    PendingPatchGrant(ownerKeyId, granteeUid, accessVector)
+                return TransactionResult.Continue
             }
             val grantId =
                 KeyMintSecurityLevelInterceptor.issueGrant(ownerKeyId, granteeUid, accessVector)
@@ -381,6 +401,10 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             // Same version gate as grant(): denied pre-36, revoke the virtualized grant on 36+.
             if (Build.VERSION.SDK_INT < GRANT_PUBLIC_API_SDK) {
                 return InterceptorUtils.createErrorReply(RESPONSE_PERMISSION_DENIED)
+            }
+            if (!KeyMintSecurityLevelInterceptor.generatedKeys.containsKey(ownerKeyId)) {
+                pendingPatchUngrants[txId] = PendingPatchUngrant(ownerKeyId, granteeUid)
+                return TransactionResult.Continue
             }
             KeyMintSecurityLevelInterceptor.revokeGrant(ownerKeyId, granteeUid)
             return InterceptorUtils.createSuccessReply(writeResultCode = false)
@@ -411,9 +435,40 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
     ): TransactionResult {
         if (target != keystoreService || reply == null) return TransactionResult.SkipTransaction
         if (InterceptorUtils.hasException(reply)) {
+            clearPendingPatchTransaction(txId)
             val normalized = InterceptorUtils.normalizeServiceSpecificReply(reply)
             return if (normalized != null) TransactionResult.OverrideReply(normalized)
             else TransactionResult.SkipTransaction
+        }
+
+        if (code == GRANT_TRANSACTION) {
+            pendingPatchGrants.remove(txId)?.let { pending ->
+                val descriptor = reply.readTypedObject(KeyDescriptor.CREATOR)
+                if (descriptor?.domain == Domain.GRANT) {
+                    KeyMintSecurityLevelInterceptor.recordGrant(
+                        descriptor.nspace,
+                        pending.ownerKeyId,
+                        pending.granteeUid,
+                        pending.accessVector,
+                    )
+                }
+                return TransactionResult.SkipTransaction
+            }
+        } else if (code == UNGRANT_TRANSACTION) {
+            pendingPatchUngrants.remove(txId)?.let { pending ->
+                KeyMintSecurityLevelInterceptor.revokeGrant(
+                    pending.ownerKeyId,
+                    pending.granteeUid,
+                )
+                return TransactionResult.SkipTransaction
+            }
+        } else if (code == UPDATE_SUBCOMPONENT_TRANSACTION) {
+            pendingPatchGrantUpdates.remove(txId)?.let { pending ->
+                KeyMintSecurityLevelInterceptor.removeGrant(pending.grantId)
+                KeyMintSecurityLevelInterceptor.evictTeeResponse(pending.ownerKeyId)
+                userUpdatedKeys.add(pending.ownerKeyId)
+                return TransactionResult.SkipTransaction
+            }
         }
 
         if (code == GET_NUMBER_OF_ENTRIES_TRANSACTION) {
@@ -639,10 +694,18 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                             .firstOrNull { it.value.nspace == info.nspace && it.key.uid == callingUid }
                             ?.key
                     }
+                    ?: KeyMintSecurityLevelInterceptor.findTeeKeyIdByKeyId(
+                        callingUid,
+                        descriptor.nspace,
+                    )
             else -> null
         }
 
-    private fun handleUpdateSubcomponent(callingUid: Int, data: Parcel): TransactionResult {
+    private fun handleUpdateSubcomponent(
+        txId: Long,
+        callingUid: Int,
+        data: Parcel,
+    ): TransactionResult {
         data.enforceInterface(IKeystoreService.DESCRIPTOR)
         val descriptor = data.readTypedObject(KeyDescriptor.CREATOR)
             ?: return TransactionResult.ContinueAndSkipPost
@@ -661,17 +724,18 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             }
 
             val generatedKeyInfo = KeyMintSecurityLevelInterceptor.generatedKeys[grant.ownerKeyId]
-            val response = generatedKeyInfo?.response
-                ?: KeyMintSecurityLevelInterceptor.getGeneratedKeyResponse(grant.ownerKeyId)
-                ?: return InterceptorUtils.createErrorReply(RESPONSE_KEY_NOT_FOUND)
+            if (generatedKeyInfo == null) {
+                pendingPatchGrantUpdates[txId] =
+                    PendingPatchGrantUpdate(descriptor.nspace, grant.ownerKeyId)
+                return TransactionResult.Continue
+            }
+            val response = generatedKeyInfo.response
             return updateResponseSubcomponent(
                 response = response,
                 publicCert = data.createByteArray(),
                 certificateChain = data.createByteArray(),
                 persist = {
-                    if (generatedKeyInfo != null) {
-                        GeneratedKeyPersistence.rePersistIfNeeded(grant.ownerKeyId.uid, generatedKeyInfo)
-                    }
+                    GeneratedKeyPersistence.rePersistIfNeeded(grant.ownerKeyId.uid, generatedKeyInfo)
                 },
                 label = "grant[${descriptor.nspace}] -> ${grant.ownerKeyId}",
             )
@@ -741,5 +805,11 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
         )
 
         return InterceptorUtils.createSuccessReply(writeResultCode = false)
+    }
+
+    private fun clearPendingPatchTransaction(txId: Long) {
+        pendingPatchGrants.remove(txId)
+        pendingPatchGrantUpdates.remove(txId)
+        pendingPatchUngrants.remove(txId)
     }
 }

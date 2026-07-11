@@ -374,7 +374,7 @@ class KeyMintSecurityLevelInterceptor(
                 blockMode = parsedParams.blockMode.ifEmpty { keyParams.blockMode },
                 padding = parsedParams.padding.ifEmpty { keyParams.padding },
                 nonce = parsedParams.nonce,
-                minMacLength = parsedParams.minMacLength,
+                macLength = parsedParams.macLength,
                 rsaOaepMgfDigest = parsedParams.rsaOaepMgfDigest.ifEmpty { keyParams.rsaOaepMgfDigest },
             )
         } else parsedParams
@@ -1218,6 +1218,19 @@ class KeyMintSecurityLevelInterceptor(
             return id
         }
 
+        fun recordGrant(
+            grantId: Long,
+            ownerKeyId: KeyIdentifier,
+            granteeUid: Int,
+            accessVector: Int,
+        ) {
+            softwareGrants[grantId] = SoftwareGrant(ownerKeyId, granteeUid, accessVector)
+        }
+
+        fun removeGrant(grantId: Long) {
+            softwareGrants.remove(grantId)
+        }
+
         /** Caller-bound resolve: only the designated grantee, only while the key exists. */
         fun resolveGrant(grantId: Long, callerUid: Int): SoftwareGrant? =
             softwareGrants[grantId]?.takeIf {
@@ -1263,6 +1276,15 @@ class KeyMintSecurityLevelInterceptor(
                 .filter { (keyId, _) -> keyId.uid == callingUid }
                 .find { (_, response) -> response.metadata?.key?.nspace == nspace }
                 ?.value
+        }
+
+        fun findTeeKeyIdByKeyId(callingUid: Int, nspace: Long?): KeyIdentifier? {
+            if (nspace == null || nspace == 0L) return null
+            return teeResponses.entries
+                .firstOrNull { (keyId, response) ->
+                    keyId.uid == callingUid && response.metadata?.key?.nspace == nspace
+                }
+                ?.key
         }
 
         /**

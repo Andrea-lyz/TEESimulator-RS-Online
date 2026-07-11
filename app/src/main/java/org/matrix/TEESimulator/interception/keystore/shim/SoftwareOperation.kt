@@ -43,7 +43,7 @@ private object JcaAlgorithmMapper {
             Digest.SHA_2_512 -> "SHA-512"
             Digest.SHA1 -> "SHA-1"
             Digest.MD5 -> "MD5"
-            else -> "SHA-1"
+            else -> throw ServiceSpecificException(KeystoreErrorCodes.unsupportedDigest)
         }
 
     fun mapSignatureAlgorithm(params: KeyMintAttestation): String {
@@ -52,7 +52,11 @@ private object JcaAlgorithmMapper {
                 Digest.SHA_2_256 -> "SHA256"
                 Digest.SHA_2_384 -> "SHA384"
                 Digest.SHA_2_512 -> "SHA512"
-                else -> "NONE"
+                Digest.SHA_2_224 -> "SHA224"
+                Digest.SHA1 -> "SHA1"
+                Digest.MD5 -> "MD5"
+                Digest.NONE -> "NONE"
+                else -> throw ServiceSpecificException(KeystoreErrorCodes.unsupportedDigest)
             }
         return when (params.algorithm) {
             Algorithm.EC -> "${digest}withECDSA"
@@ -167,7 +171,7 @@ private class CipherPrimitive(
             if (oaepSpec != null) {
                 init(opMode, cryptoKey, oaepSpec)
             } else if (nonce != null && isAead) {
-                init(opMode, cryptoKey, javax.crypto.spec.GCMParameterSpec(params.minMacLength ?: 128, nonce))
+                init(opMode, cryptoKey, javax.crypto.spec.GCMParameterSpec(requireNotNull(params.macLength), nonce))
             } else if (nonce != null) {
                 init(opMode, cryptoKey, javax.crypto.spec.IvParameterSpec(nonce))
             } else {
@@ -200,6 +204,7 @@ private class CipherPrimitive(
 }
 
 private class MacPrimitive(secretKey: javax.crypto.SecretKey, params: KeyMintAttestation) : CryptoPrimitive {
+    private val macLengthBytes = requireNotNull(params.macLength) / 8
     private val mac: Mac =
         Mac.getInstance(
             when (params.digest.firstOrNull()) {
@@ -208,7 +213,8 @@ private class MacPrimitive(secretKey: javax.crypto.SecretKey, params: KeyMintAtt
                 Digest.SHA_2_384 -> "HmacSHA384"
                 Digest.SHA_2_512 -> "HmacSHA512"
                 Digest.SHA1 -> "HmacSHA1"
-                else -> "HmacSHA256"
+                Digest.MD5 -> "HmacMD5"
+                else -> throw ServiceSpecificException(KeystoreErrorCodes.unsupportedDigest)
             }
         ).apply {
             init(secretKey)
@@ -221,7 +227,7 @@ private class MacPrimitive(secretKey: javax.crypto.SecretKey, params: KeyMintAtt
 
     override fun finish(data: ByteArray?, signature: ByteArray?): ByteArray {
         if (data != null) update(data)
-        return mac.doFinal()
+        return mac.doFinal().copyOf(macLengthBytes)
     }
 
     override fun abort() {}
@@ -459,6 +465,7 @@ class SoftwareOperation(
 
     private fun mapToServiceSpecificException(e: Exception): ServiceSpecificException = when (e) {
         is SignatureException -> ServiceSpecificException(KeystoreErrorCodes.verificationFailed, e.message)
+        is javax.crypto.AEADBadTagException -> ServiceSpecificException(KeystoreErrorCodes.verificationFailed, e.message)
         is javax.crypto.BadPaddingException -> ServiceSpecificException(KeystoreErrorCodes.invalidArgument, e.message)
         is javax.crypto.IllegalBlockSizeException -> ServiceSpecificException(KeystoreErrorCodes.invalidInputLength, e.message)
         is java.security.InvalidKeyException -> ServiceSpecificException(KeystoreErrorCodes.incompatibleKey, e.message)
@@ -507,12 +514,32 @@ internal object KeystoreErrorCodes {
         resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_BLOCK_MODE", -8)
     }
 
+    val unsupportedBlockMode: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "UNSUPPORTED_BLOCK_MODE", -7)
+    }
+
+    val unsupportedMacLength: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "UNSUPPORTED_MAC_LENGTH", -9)
+    }
+
+    val unsupportedPaddingMode: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "UNSUPPORTED_PADDING_MODE", -10)
+    }
+
     val incompatiblePaddingMode: Int by lazy {
         resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_PADDING_MODE", -11)
     }
 
     val incompatibleDigest: Int by lazy {
-        resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_DIGEST", -12)
+        resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_DIGEST", -13)
+    }
+
+    val unsupportedDigest: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "UNSUPPORTED_DIGEST", -12)
+    }
+
+    val incompatibleMgfDigest: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_MGF_DIGEST", -78)
     }
 
     val unsupportedPurpose: Int by lazy {
@@ -524,11 +551,11 @@ internal object KeystoreErrorCodes {
     }
 
     val keyNotYetValid: Int by lazy {
-        resolveField("android.hardware.security.keymint.ErrorCode", "KEY_NOT_YET_VALID", -39)
+        resolveField("android.hardware.security.keymint.ErrorCode", "KEY_NOT_YET_VALID", -24)
     }
 
     val keyExpired: Int by lazy {
-        resolveField("android.hardware.security.keymint.ErrorCode", "KEY_EXPIRED", -40)
+        resolveField("android.hardware.security.keymint.ErrorCode", "KEY_EXPIRED", -25)
     }
 
     val callerNonceProhibited: Int by lazy {
@@ -537,6 +564,18 @@ internal object KeystoreErrorCodes {
 
     val invalidMacLength: Int by lazy {
         resolveField("android.hardware.security.keymint.ErrorCode", "INVALID_MAC_LENGTH", -57)
+    }
+
+    val missingMacLength: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "MISSING_MAC_LENGTH", -53)
+    }
+
+    val missingNonce: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "MISSING_NONCE", -51)
+    }
+
+    val invalidNonce: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "INVALID_NONCE", -52)
     }
 
     val unknownError: Int by lazy {
