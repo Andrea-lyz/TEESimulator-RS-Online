@@ -1,6 +1,7 @@
 package org.matrix.TEESimulator.attestation
 
 import android.content.pm.PackageManager
+import android.hardware.security.keymint.Algorithm
 import android.os.Build
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
@@ -259,7 +260,13 @@ object AttestationBuilder {
 
         val attestVersion = AndroidDeviceUtils.getAttestVersion(securityLevel)
 
-        if (params.rsaOaepMgfDigest.isNotEmpty() && attestVersion >= 100) {
+        // RSA_OAEP_MGF_DIGEST was introduced with KeyMint 3 (attestation version 300); only
+        // RSA keys may carry it.
+        if (
+            params.algorithm == Algorithm.RSA &&
+                params.rsaOaepMgfDigest.isNotEmpty() &&
+                attestVersion >= 300
+        ) {
             list.add(
                 DERTaggedObject(
                     true,

@@ -59,8 +59,11 @@ object AuthorizeCreate {
         if (opParams.digest.any { it !in keyParams.digest }) {
             return KeystoreErrorCodes.incompatibleDigest
         }
+        if (opParams.rsaOaepMgfDigest.contains(Digest.NONE)) {
+            return KeystoreErrorCodes.unsupportedMgfDigest
+        }
         if (opParams.rsaOaepMgfDigest.any { it !in keyParams.rsaOaepMgfDigest }) {
-            return KeystoreErrorCodes.incompatibleDigest
+            return KeystoreErrorCodes.incompatibleMgfDigest
         }
 
         if (keyParams.algorithm == Algorithm.AES && opParams.blockMode.contains(BlockMode.GCM)) {
@@ -142,10 +145,14 @@ object AuthorizeCreate {
                         KeystoreErrorCodes.incompatiblePaddingMode
                     needsDigest && missingOrAmbiguous(opParams.digest, keyParams.digest) ->
                         KeystoreErrorCodes.incompatibleDigest
+                    // AOSP: begin() with no MGF digest defaults to SHA-1 and must fail
+                    // (INCOMPATIBLE_MGF_DIGEST) when the key's authorized MGF digest set
+                    // does not include SHA-1.
                     padding == PaddingMode.RSA_OAEP &&
                         opParams.rsaOaepMgfDigest.isEmpty() &&
-                        keyParams.rsaOaepMgfDigest.distinct().size > 1 ->
-                        KeystoreErrorCodes.incompatibleDigest
+                        keyParams.rsaOaepMgfDigest.isNotEmpty() &&
+                        Digest.SHA1 !in keyParams.rsaOaepMgfDigest ->
+                        KeystoreErrorCodes.incompatibleMgfDigest
                     else -> null
                 }
             }

@@ -455,10 +455,10 @@ class KeyMintSecurityLevelInterceptor(
                             digest = parsedParams.digest.ifEmpty { keyParams.digest },
                             blockMode = parsedParams.blockMode.ifEmpty { keyParams.blockMode },
                             padding = parsedParams.padding.ifEmpty { keyParams.padding },
-                            rsaOaepMgfDigest =
-                                parsedParams.rsaOaepMgfDigest.ifEmpty {
-                                    keyParams.rsaOaepMgfDigest
-                                },
+                            // AOSP: begin() without an explicit MGF digest defaults to SHA-1
+                            // (checked by AuthorizeCreate, applied by SoftwareOperation); it
+                            // must NOT inherit the key's authorized MGF digest set.
+                            rsaOaepMgfDigest = parsedParams.rsaOaepMgfDigest,
                             nonce = parsedParams.nonce,
                             minMacLength = keyParams.minMacLength,
                             macLength =
@@ -1411,6 +1411,9 @@ class KeyMintSecurityLevelInterceptor(
                 maxUsesPerBoot = null,
                 maxBootLevel = null,
                 minMacLength = null,
+                // Fallback rebuild only: pre-v4 persistence records have no MGF digest column,
+                // so it cannot be restored here. The primary path persists the byte-identical
+                // KeyMetadata snapshot (which carries the tag) and is unaffected.
                 rsaOaepMgfDigest = emptyList(),
             )
         return buildKeyEntryResponse(record.uid, certChain, attestation, descriptor)
@@ -1823,6 +1826,16 @@ private fun KeyMintAttestation.toAuthorizations(
     this.digest.forEach { authList.add(createAuth(Tag.DIGEST, KeyParameterValue.digest(it))) }
     this.padding.forEach {
         authList.add(createAuth(Tag.PADDING, KeyParameterValue.paddingMode(it)))
+    }
+    // KeyMint 3+ HALs echo RSA_OAEP_MGF_DIGEST into key characteristics when the
+    // generation request carried it (AOSP keymint VTS RsaOaepMGFDigest* cases).
+    // Duck Detector's raw keystore2 probe requires this authorization on the
+    // KeyMint 3+ path; emitting it request-driven keeps non-OAEP keys on the
+    // reference authorization layout.
+    if (this.algorithm == Algorithm.RSA && this.rsaOaepMgfDigest.isNotEmpty()) {
+        this.rsaOaepMgfDigest.distinct().forEach {
+            authList.add(createAuth(Tag.RSA_OAEP_MGF_DIGEST, KeyParameterValue.digest(it)))
+        }
     }
     if (this.rsaPublicExponent != null) {
         authList.add(

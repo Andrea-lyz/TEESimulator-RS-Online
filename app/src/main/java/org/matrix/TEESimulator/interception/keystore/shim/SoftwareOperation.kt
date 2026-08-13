@@ -212,7 +212,8 @@ private class CipherPrimitive(
                 val mgfDigest =
                     params.rsaOaepMgfDigest.firstOrNull()?.let {
                         JcaAlgorithmMapper.mapOaepDigest(it)
-                    } ?: mainDigest
+                        // AOSP: begin() without an explicit MGF digest defaults to SHA-1.
+                    } ?: "SHA-1"
                 init(
                     opMode,
                     cryptoKey,
@@ -619,6 +620,14 @@ internal object KeystoreErrorCodes {
 
     val incompatibleDigest: Int by lazy {
         resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_DIGEST", -13)
+    }
+
+    val incompatibleMgfDigest: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "INCOMPATIBLE_MGF_DIGEST", -78)
+    }
+
+    val unsupportedMgfDigest: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "UNSUPPORTED_MGF_DIGEST", -79)
     }
 
     val invalidMacLength: Int by lazy {
