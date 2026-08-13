@@ -229,6 +229,22 @@ androidComponents {
                 // The destination for all the above 'from' operations.
                 into(tempModuleDir)
 
+                doLast {
+                    // Windows checkouts carry CRLF in module/*.sh (core.autocrlf); the device
+                    // mksh chokes on CR (customize.sh "unexpected word" syntax errors), so
+                    // normalize shell scripts to LF in the staging dir. The daemon launcher is a
+                    // shell script without an extension, so it is covered explicitly; binaries
+                    // (inject, supervisor, libs) are never touched. Linux/CI builds already
+                    // produce LF and are unaffected.
+                    tempModuleDir.get().asFile.walkTopDown()
+                        .filter { it.isFile && (it.extension == "sh" || it.name == "daemon") }
+                        .forEach { file ->
+                            val text = file.readText()
+                            val normalized = text.replace("\r\n", "\n")
+                            if (normalized != text) file.writeText(normalized)
+                        }
+                }
+
                 if (isDebug) {
                     doLast {
                         // Debug-only: grant the keystore + soterserver (platform_app) domains
