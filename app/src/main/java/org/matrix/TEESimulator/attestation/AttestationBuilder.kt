@@ -303,12 +303,14 @@ object AttestationBuilder {
             // the official attestation record schema (KM_AUTH_LIST) has no [502] member and
             // strict parsers reject unknown explicit tags, which validators read as tampering.
             // A real TEE always attests USER_AUTH_TYPE for auth-required keys, even when the
-            // request only carries USER_SECURE_ID (per-operation auth); default to PASSWORD.
+            // request only carries USER_SECURE_ID (per-operation auth). When the request omits
+            // the type, default to the device's strong authenticator (BIOMETRIC_STRONG = 2),
+            // which is what the enrolled SID actually enforces on this device.
             list.add(
                 DERTaggedObject(
                     true,
                     AttestationConstants.TAG_USER_AUTH_TYPE,
-                    ASN1Integer(((params.userAuthType ?: 1).toLong()) and 0xFFFFFFFFL),
+                    ASN1Integer(((params.userAuthType ?: 2).toLong()) and 0xFFFFFFFFL),
                 )
             )
             val authTimeout = params.authTimeout

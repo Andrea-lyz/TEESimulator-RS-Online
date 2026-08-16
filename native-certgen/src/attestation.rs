@@ -117,8 +117,9 @@ fn build_tee_enforced(params: &CertGenParams) -> Result<Vec<u8>> {
         // and strict parsers reject unknown explicit tags. Values are unsigned (u32) to match
         // AOSP uint semantics (HardwareAuthenticatorType.ANY = 0xFFFFFFFF). A real TEE always
         // attests USER_AUTH_TYPE for auth-required keys, even when the request only carries
-        // USER_SECURE_ID (per-operation auth); default to PASSWORD (1).
-        let auth_type = if params.user_auth_type == -1 { 1 } else { params.user_auth_type };
+        // USER_SECURE_ID (per-operation auth). Default to the device's strong authenticator
+        // (BIOMETRIC_STRONG = 2) when the request omits the type.
+        let auth_type = if params.user_auth_type == -1 { 2 } else { params.user_auth_type };
         fields.push((504, enc_integer((auth_type as u32) as i64)));
         if params.auth_timeout > 0 {
             fields.push((505, enc_integer((params.auth_timeout as u32) as i64)));

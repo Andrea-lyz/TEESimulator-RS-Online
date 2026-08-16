@@ -1891,7 +1891,7 @@ private fun KeyMintAttestation.toAuthorizations(
         authList.add(
             createAuth(
                 Tag.USER_AUTH_TYPE,
-                KeyParameterValue.hardwareAuthenticatorType(this.userAuthType ?: 1),
+                KeyParameterValue.hardwareAuthenticatorType(this.userAuthType ?: 2),
             )
         )
         val timeout = this.authTimeout
