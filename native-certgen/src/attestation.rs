@@ -110,18 +110,15 @@ fn build_tee_enforced(params: &CertGenParams) -> Result<Vec<u8>> {
     // Tag 503: NO_AUTH_REQUIRED — NULL (conditional)
     if params.no_auth_required {
         fields.push((503, enc_null()));
-    } else {
-        // User authentication required: mirror the requested auth policy like a real
-        // KeyMint TEE — USER_AUTH_TYPE always, AUTH_TIMEOUT for timed auth, and
-        // USER_SECURE_ID for per-operation auth when the request carried it. An
-        // auth-required key whose record omits these tags (or carries NO_AUTH_REQUIRED)
-        // is the "policy bypass" tell attestation validators key on.
-        fields.push((504, enc_integer(params.user_auth_type as i64)));
+    } else if params.user_auth_type != -1 || params.user_secure_id >= 0 {
+        // User authentication required with explicit auth policy in the request: mirror it
+        // like a real KeyMint TEE — USER_AUTH_TYPE always, AUTH_TIMEOUT for timed auth.
+        // USER_SECURE_ID [502] is intentionally NOT emitted: KM_AUTH_LIST has no such member
+        // and strict parsers reject unknown explicit tags. Values are unsigned (u32) to match
+        // AOSP uint semantics (HardwareAuthenticatorType.ANY = 0xFFFFFFFF).
+        fields.push((504, enc_integer((params.user_auth_type as u32) as i64)));
         if params.auth_timeout > 0 {
-            fields.push((505, enc_integer(params.auth_timeout as i64)));
-        }
-        if params.user_secure_id >= 0 {
-            fields.push((502, enc_integer(params.user_secure_id)));
+            fields.push((505, enc_integer((params.auth_timeout as u32) as i64)));
         }
     }
 

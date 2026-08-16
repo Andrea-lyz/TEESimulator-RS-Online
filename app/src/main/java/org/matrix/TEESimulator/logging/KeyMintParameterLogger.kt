@@ -107,7 +107,9 @@ object KeyMintParameterLogger {
                 Tag.USAGE_EXPIRE_DATETIME -> Date(value.dateTime).toString()
                 Tag.CERTIFICATE_SUBJECT -> X500Name(X500Principal(value.blob).name).toString()
                 Tag.RSA_PUBLIC_EXPONENT -> value.longInteger.toString()
-                Tag.NO_AUTH_REQUIRED -> "true"
+                Tag.NO_AUTH_REQUIRED -> value.boolValue.toString()
+                Tag.USER_AUTH_TYPE -> value.hardwareAuthenticatorType.toString()
+                Tag.USER_SECURE_ID -> value.longInteger.toString()
                 Tag.ATTESTATION_CHALLENGE,
                 Tag.ATTESTATION_ID_BRAND,
                 Tag.ATTESTATION_ID_DEVICE,

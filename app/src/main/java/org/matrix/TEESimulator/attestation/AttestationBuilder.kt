@@ -296,32 +296,29 @@ object AttestationBuilder {
             list.add(
                 DERTaggedObject(true, AttestationConstants.TAG_NO_AUTH_REQUIRED, DERNull.INSTANCE)
             )
-        } else {
-            // User authentication is required (or the request did not explicitly waive it):
-            // mirror the requested auth policy in teeEnforced exactly as a real KeyMint TEE
-            // does — USER_AUTH_TYPE always, AUTH_TIMEOUT for timed auth, USER_SECURE_ID for
-            // per-operation auth. An auth-required key whose record carries NO_AUTH_REQUIRED
-            // or omits these tags is the "policy bypass" tell attestation validators key on.
-            list.add(
-                DERTaggedObject(
-                    true,
-                    AttestationConstants.TAG_USER_AUTH_TYPE,
-                    ASN1Integer((params.userAuthType ?: 1).toLong()),
+        } else if (params.userAuthType != null || params.userSecureId != null) {
+            // User authentication is required and the request carried explicit auth policy:
+            // mirror it in teeEnforced exactly as a real KeyMint TEE does — USER_AUTH_TYPE
+            // always, AUTH_TIMEOUT for timed auth. USER_SECURE_ID is intentionally NOT emitted:
+            // the official attestation record schema (KM_AUTH_LIST) has no [502] member and
+            // strict parsers reject unknown explicit tags, which validators read as tampering.
+            params.userAuthType?.let {
+                list.add(
+                    DERTaggedObject(
+                        true,
+                        AttestationConstants.TAG_USER_AUTH_TYPE,
+                        ASN1Integer(it.toLong() and 0xFFFFFFFFL),
+                    )
                 )
-            )
+            }
             val authTimeout = params.authTimeout
             if (authTimeout != null && authTimeout > 0) {
                 list.add(
                     DERTaggedObject(
                         true,
                         AttestationConstants.TAG_AUTH_TIMEOUT,
-                        ASN1Integer(authTimeout.toLong()),
+                        ASN1Integer(authTimeout.toLong() and 0xFFFFFFFFL),
                     )
-                )
-            }
-            params.userSecureId?.let { sid ->
-                list.add(
-                    DERTaggedObject(true, AttestationConstants.TAG_USER_SECURE_ID, ASN1Integer(sid))
                 )
             }
         }

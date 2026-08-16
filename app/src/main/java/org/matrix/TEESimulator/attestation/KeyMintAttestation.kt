@@ -135,7 +135,7 @@ data class KeyMintAttestation(
         trustedUserPresenceRequired = params.findBoolean(Tag.TRUSTED_USER_PRESENCE_REQUIRED),
         trustedConfirmationRequired = params.findBoolean(Tag.TRUSTED_CONFIRMATION_REQUIRED),
         noAuthRequired = params.findBoolean(Tag.NO_AUTH_REQUIRED),
-        userAuthType = params.findInteger(Tag.USER_AUTH_TYPE),
+        userAuthType = params.findHardwareAuthenticatorType(Tag.USER_AUTH_TYPE),
         authTimeout = params.findInteger(Tag.AUTH_TIMEOUT),
         userSecureId = params.findLongInteger(Tag.USER_SECURE_ID)?.toLong(),
         maxUsesPerBoot = params.findInteger(Tag.MAX_USES_PER_BOOT),
@@ -159,6 +159,10 @@ data class KeyMintAttestation(
 /** Maps to AOSP field = Integer */
 private fun Array<KeyParameter>.findInteger(tag: Int): Int? =
     this.find { it.tag == tag }?.value?.integer
+
+/** Maps to AOSP field = HardwareAuthenticatorType (tag 504 USER_AUTH_TYPE) */
+private fun Array<KeyParameter>.findHardwareAuthenticatorType(tag: Int): Int? =
+    this.find { it.tag == tag }?.value?.hardwareAuthenticatorType
 
 /** Maps to AOSP field = Algorithm */
 private fun Array<KeyParameter>.findAlgorithm(tag: Int): Int? =

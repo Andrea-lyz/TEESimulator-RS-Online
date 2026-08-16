@@ -1097,9 +1097,9 @@ class KeyMintSecurityLevelInterceptor(
                         usageCountLimit = params.usageCountLimit ?: -1,
                         callerNonce = params.callerNonce == true,
                         unlockedDeviceRequired = params.unlockedDeviceRequired == true,
-                        noAuthRequired = params.noAuthRequired != false,
-                        userAuthType = params.userAuthType ?: 1,
-                        authTimeout = params.authTimeout ?: 0,
+                        noAuthRequired = params.noAuthRequired == true,
+                        userAuthType = params.userAuthType ?: -1,
+                        authTimeout = params.authTimeout ?: -1,
                         userSecureId = params.userSecureId ?: -1L,
                         uid = callingUid,
                         debugLogging = SystemLogger.isDebugBuild,
@@ -1888,7 +1888,7 @@ private fun KeyMintAttestation.toAuthorizations(
         // User authentication required: mirror the requested auth policy in key metadata so
         // KeyInfo reports isUserAuthenticationRequired() correctly (TrustAttestor checks this).
         this.userAuthType?.let {
-            authList.add(createAuth(Tag.USER_AUTH_TYPE, KeyParameterValue.integer(it)))
+            authList.add(createAuth(Tag.USER_AUTH_TYPE, KeyParameterValue.hardwareAuthenticatorType(it)))
         }
         val timeout = this.authTimeout
         if (timeout != null && timeout > 0) {

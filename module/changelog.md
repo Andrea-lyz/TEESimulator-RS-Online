@@ -3,7 +3,7 @@
 
 ---
 
-## TEESimulator-RS v6.0.1-318
+## TEESimulator-RS v6.0.1-320
 
 Fixes the "User authentication policy bypass" finding from TrustAttestor v1.1: the forged attestation
 record and key metadata now mirror the requested user-authentication policy instead of always
@@ -11,15 +11,26 @@ claiming NO_AUTH_REQUIRED.
 
 ### Attestation policy fidelity
 - `findBoolean` now reads the actual boolean value of `NO_AUTH_REQUIRED` instead of treating tag
-  presence as true. A request with `setUserAuthenticationRequired(true)` carries
-  `NO_AUTH_REQUIRED=false`; the previous parser misread it as true and the forged record claimed
+  presence as true; the previous parser misread `NO_AUTH_REQUIRED=false` (or its absence on
+  auth-required keys, which is what the framework actually sends) and the forged record claimed
   the key required no authentication — exactly the contradiction TrustAttestor keys on
   (0x40000000).
-- `USER_AUTH_TYPE` (504), `AUTH_TIMEOUT` (505) and `USER_SECURE_ID` (502) from the request are
-  now parsed and emitted in the teeEnforced list (both Kotlin and Rust certgen paths), matching
-  real KeyMint records for auth-required keys.
+- `USER_AUTH_TYPE` (504) and `AUTH_TIMEOUT` (505) from the request are now parsed and emitted in
+  the teeEnforced list (both Kotlin and Rust certgen paths), matching real KeyMint records for
+  auth-required keys. `USER_SECURE_ID` (502) stays in key metadata only — the official
+  attestation record schema has no [502] member, and strict parsers reject it as tampering.
+- AIDL union fix: `USER_AUTH_TYPE` (tag 504) is carried in `KeyParameterValue.hardwareAuthenticatorType`,
+  not `integer`; reading/writing the wrong union member threw `IllegalStateException` on every
+  auth-required keygen (Duck Detector biometric-bound AES key).
+- Auth-policy tags are emitted only when the request actually carries auth evidence, so legacy
+  and software key paths that set no auth policy are not fabricated into auth-required keys.
 - Key metadata authorizations now carry the same auth-policy tags, so
   `KeyInfo.isUserAuthenticationRequired()` reports correctly.
+
+> [!IMPORTANT]
+> After upgrading, clear `/data/adb/tricky_store/persistent_keys/` once so keys persisted by the
+> intermediate v319 builds (which used the wrong AIDL union member for USER_AUTH_TYPE) are not
+> re-parsed and dropped on restore.
 
 ### 中文说明
 
