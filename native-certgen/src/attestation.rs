@@ -115,8 +115,11 @@ fn build_tee_enforced(params: &CertGenParams) -> Result<Vec<u8>> {
         // like a real KeyMint TEE — USER_AUTH_TYPE always, AUTH_TIMEOUT for timed auth.
         // USER_SECURE_ID [502] is intentionally NOT emitted: KM_AUTH_LIST has no such member
         // and strict parsers reject unknown explicit tags. Values are unsigned (u32) to match
-        // AOSP uint semantics (HardwareAuthenticatorType.ANY = 0xFFFFFFFF).
-        fields.push((504, enc_integer((params.user_auth_type as u32) as i64)));
+        // AOSP uint semantics (HardwareAuthenticatorType.ANY = 0xFFFFFFFF). A real TEE always
+        // attests USER_AUTH_TYPE for auth-required keys, even when the request only carries
+        // USER_SECURE_ID (per-operation auth); default to PASSWORD (1).
+        let auth_type = if params.user_auth_type == -1 { 1 } else { params.user_auth_type };
+        fields.push((504, enc_integer((auth_type as u32) as i64)));
         if params.auth_timeout > 0 {
             fields.push((505, enc_integer((params.auth_timeout as u32) as i64)));
         }

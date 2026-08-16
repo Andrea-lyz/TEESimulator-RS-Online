@@ -302,15 +302,15 @@ object AttestationBuilder {
             // always, AUTH_TIMEOUT for timed auth. USER_SECURE_ID is intentionally NOT emitted:
             // the official attestation record schema (KM_AUTH_LIST) has no [502] member and
             // strict parsers reject unknown explicit tags, which validators read as tampering.
-            params.userAuthType?.let {
-                list.add(
-                    DERTaggedObject(
-                        true,
-                        AttestationConstants.TAG_USER_AUTH_TYPE,
-                        ASN1Integer(it.toLong() and 0xFFFFFFFFL),
-                    )
+            // A real TEE always attests USER_AUTH_TYPE for auth-required keys, even when the
+            // request only carries USER_SECURE_ID (per-operation auth); default to PASSWORD.
+            list.add(
+                DERTaggedObject(
+                    true,
+                    AttestationConstants.TAG_USER_AUTH_TYPE,
+                    ASN1Integer(((params.userAuthType ?: 1).toLong()) and 0xFFFFFFFFL),
                 )
-            }
+            )
             val authTimeout = params.authTimeout
             if (authTimeout != null && authTimeout > 0) {
                 list.add(

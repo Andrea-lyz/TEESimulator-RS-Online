@@ -1884,12 +1884,16 @@ private fun KeyMintAttestation.toAuthorizations(
 
     if (this.noAuthRequired == true) {
         authList.add(createAuth(Tag.NO_AUTH_REQUIRED, KeyParameterValue.boolValue(true)))
-    } else {
-        // User authentication required: mirror the requested auth policy in key metadata so
-        // KeyInfo reports isUserAuthenticationRequired() correctly (TrustAttestor checks this).
-        this.userAuthType?.let {
-            authList.add(createAuth(Tag.USER_AUTH_TYPE, KeyParameterValue.hardwareAuthenticatorType(it)))
-        }
+    } else if (this.userAuthType != null || this.userSecureId != null) {
+        // User authentication required with explicit auth evidence: mirror the requested policy
+        // in key metadata so KeyInfo reports isUserAuthenticationRequired() correctly. A real
+        // TEE always surfaces USER_AUTH_TYPE here, even for SID-only per-operation auth.
+        authList.add(
+            createAuth(
+                Tag.USER_AUTH_TYPE,
+                KeyParameterValue.hardwareAuthenticatorType(this.userAuthType ?: 1),
+            )
+        )
         val timeout = this.authTimeout
         if (timeout != null && timeout > 0) {
             authList.add(createAuth(Tag.AUTH_TIMEOUT, KeyParameterValue.integer(timeout)))
@@ -1897,6 +1901,9 @@ private fun KeyMintAttestation.toAuthorizations(
         this.userSecureId?.let {
             authList.add(createAuth(Tag.USER_SECURE_ID, KeyParameterValue.longInteger(it)))
         }
+    } else {
+        // No auth evidence (legacy/software paths): keep KeyInfo consistent with a no-auth key.
+        authList.add(createAuth(Tag.NO_AUTH_REQUIRED, KeyParameterValue.boolValue(true)))
     }
     authList.add(
         createAuth(Tag.ORIGIN, KeyParameterValue.origin(this.origin ?: KeyOrigin.GENERATED))

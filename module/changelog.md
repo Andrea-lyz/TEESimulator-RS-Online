@@ -3,7 +3,7 @@
 
 ---
 
-## TEESimulator-RS v6.0.1-320
+## TEESimulator-RS v6.0.1-321
 
 Fixes the "User authentication policy bypass" finding from TrustAttestor v1.1: the forged attestation
 record and key metadata now mirror the requested user-authentication policy instead of always
@@ -22,8 +22,7 @@ claiming NO_AUTH_REQUIRED.
 - AIDL union fix: `USER_AUTH_TYPE` (tag 504) is carried in `KeyParameterValue.hardwareAuthenticatorType`,
   not `integer`; reading/writing the wrong union member threw `IllegalStateException` on every
   auth-required keygen (Duck Detector biometric-bound AES key).
-- Auth-policy tags are emitted only when the request actually carries auth evidence, so legacy
-  and software key paths that set no auth policy are not fabricated into auth-required keys.
+- Auth-policy tags are emitted only when the request actually carries auth evidence; when it`n  does (USER_SECURE_ID and/or USER_AUTH_TYPE present), USER_AUTH_TYPE is always attested - a`n  real TEE surfaces it even for SID-only per-operation auth, and omitting it is exactly the`n  policy bypass tell TrustAttestor keys on. Legacy/software paths without auth evidence stay`n  untouched (record) and report no-auth in KeyInfo.
 - Key metadata authorizations now carry the same auth-policy tags, so
   `KeyInfo.isUserAuthenticationRequired()` reports correctly.
 
