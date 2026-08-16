@@ -3,6 +3,36 @@
 
 ---
 
+## TEESimulator-RS v6.0.1-318
+
+Fixes the "User authentication policy bypass" finding from TrustAttestor v1.1: the forged attestation
+record and key metadata now mirror the requested user-authentication policy instead of always
+claiming NO_AUTH_REQUIRED.
+
+### Attestation policy fidelity
+- `findBoolean` now reads the actual boolean value of `NO_AUTH_REQUIRED` instead of treating tag
+  presence as true. A request with `setUserAuthenticationRequired(true)` carries
+  `NO_AUTH_REQUIRED=false`; the previous parser misread it as true and the forged record claimed
+  the key required no authentication — exactly the contradiction TrustAttestor keys on
+  (0x40000000).
+- `USER_AUTH_TYPE` (504), `AUTH_TIMEOUT` (505) and `USER_SECURE_ID` (502) from the request are
+  now parsed and emitted in the teeEnforced list (both Kotlin and Rust certgen paths), matching
+  real KeyMint records for auth-required keys.
+- Key metadata authorizations now carry the same auth-policy tags, so
+  `KeyInfo.isUserAuthenticationRequired()` reports correctly.
+
+### 中文说明
+
+修复 TrustAttestor v1.1 报出的“用户认证策略绕过 (0x40000000)”：伪造证明记录与密钥元数据现在
+如实反映请求中的用户认证策略，而不是一律声称无需认证。
+- 修复 `NO_AUTH_REQUIRED` 布尔解析（此前“标签存在即视为 true”，把
+  `setUserAuthenticationRequired(true)` 的 `NO_AUTH_REQUIRED=false` 误读为 true，导致记录自相矛盾）。
+- 请求中的 `USER_AUTH_TYPE`/`AUTH_TIMEOUT`/`USER_SECURE_ID` 现在会写入 teeEnforced
+  （Kotlin 与 Rust 两条证书生成路径一致），与真机 KeyMint 记录一致。
+- KeyInfo 授权列表同步携带认证策略标签。
+
+---
+
 ## TEESimulator-RS v6.0.1-307
 
 Fixes five gaps in the module's TEE key-operation and attestation emulation. Two of them fix crashes in real app crypto on a broken-TEE device: any app using an AndroidKeyStore HMAC key or an RSA-OAEP-SHA256 key was throwing. This is a beta; the confirmation logs are in the debug build only, and nothing is field-verified yet.

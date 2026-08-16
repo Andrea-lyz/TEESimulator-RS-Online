@@ -110,6 +110,19 @@ fn build_tee_enforced(params: &CertGenParams) -> Result<Vec<u8>> {
     // Tag 503: NO_AUTH_REQUIRED — NULL (conditional)
     if params.no_auth_required {
         fields.push((503, enc_null()));
+    } else {
+        // User authentication required: mirror the requested auth policy like a real
+        // KeyMint TEE — USER_AUTH_TYPE always, AUTH_TIMEOUT for timed auth, and
+        // USER_SECURE_ID for per-operation auth when the request carried it. An
+        // auth-required key whose record omits these tags (or carries NO_AUTH_REQUIRED)
+        // is the "policy bypass" tell attestation validators key on.
+        fields.push((504, enc_integer(params.user_auth_type as i64)));
+        if params.auth_timeout > 0 {
+            fields.push((505, enc_integer(params.auth_timeout as i64)));
+        }
+        if params.user_secure_id >= 0 {
+            fields.push((502, enc_integer(params.user_secure_id)));
+        }
     }
 
     // Tag 702: ORIGIN — INTEGER 0 (GENERATED)

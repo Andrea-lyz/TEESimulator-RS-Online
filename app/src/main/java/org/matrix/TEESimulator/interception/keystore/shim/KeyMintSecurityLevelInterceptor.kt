@@ -1098,6 +1098,9 @@ class KeyMintSecurityLevelInterceptor(
                         callerNonce = params.callerNonce == true,
                         unlockedDeviceRequired = params.unlockedDeviceRequired == true,
                         noAuthRequired = params.noAuthRequired != false,
+                        userAuthType = params.userAuthType ?: 1,
+                        authTimeout = params.authTimeout ?: 0,
+                        userSecureId = params.userSecureId ?: -1L,
                         uid = callingUid,
                         debugLogging = SystemLogger.isDebugBuild,
                     )
@@ -1879,8 +1882,21 @@ private fun KeyMintAttestation.toAuthorizations(
         authList.add(createAuth(Tag.MAX_BOOT_LEVEL, KeyParameterValue.integer(this.maxBootLevel)))
     }
 
-    if (this.noAuthRequired != false) {
+    if (this.noAuthRequired == true) {
         authList.add(createAuth(Tag.NO_AUTH_REQUIRED, KeyParameterValue.boolValue(true)))
+    } else {
+        // User authentication required: mirror the requested auth policy in key metadata so
+        // KeyInfo reports isUserAuthenticationRequired() correctly (TrustAttestor checks this).
+        this.userAuthType?.let {
+            authList.add(createAuth(Tag.USER_AUTH_TYPE, KeyParameterValue.integer(it)))
+        }
+        val timeout = this.authTimeout
+        if (timeout != null && timeout > 0) {
+            authList.add(createAuth(Tag.AUTH_TIMEOUT, KeyParameterValue.integer(timeout)))
+        }
+        this.userSecureId?.let {
+            authList.add(createAuth(Tag.USER_SECURE_ID, KeyParameterValue.longInteger(it)))
+        }
     }
     authList.add(
         createAuth(Tag.ORIGIN, KeyParameterValue.origin(this.origin ?: KeyOrigin.GENERATED))

@@ -296,6 +296,34 @@ object AttestationBuilder {
             list.add(
                 DERTaggedObject(true, AttestationConstants.TAG_NO_AUTH_REQUIRED, DERNull.INSTANCE)
             )
+        } else {
+            // User authentication is required (or the request did not explicitly waive it):
+            // mirror the requested auth policy in teeEnforced exactly as a real KeyMint TEE
+            // does — USER_AUTH_TYPE always, AUTH_TIMEOUT for timed auth, USER_SECURE_ID for
+            // per-operation auth. An auth-required key whose record carries NO_AUTH_REQUIRED
+            // or omits these tags is the "policy bypass" tell attestation validators key on.
+            list.add(
+                DERTaggedObject(
+                    true,
+                    AttestationConstants.TAG_USER_AUTH_TYPE,
+                    ASN1Integer((params.userAuthType ?: 1).toLong()),
+                )
+            )
+            val authTimeout = params.authTimeout
+            if (authTimeout != null && authTimeout > 0) {
+                list.add(
+                    DERTaggedObject(
+                        true,
+                        AttestationConstants.TAG_AUTH_TIMEOUT,
+                        ASN1Integer(authTimeout.toLong()),
+                    )
+                )
+            }
+            params.userSecureId?.let { sid ->
+                list.add(
+                    DERTaggedObject(true, AttestationConstants.TAG_USER_SECURE_ID, ASN1Integer(sid))
+                )
+            }
         }
 
         if (params.allowWhileOnBody == true) {

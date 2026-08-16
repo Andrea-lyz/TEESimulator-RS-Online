@@ -93,6 +93,10 @@ pub struct CertGenParams {
     pub caller_nonce: bool,
     pub unlocked_device_required: bool,
     pub no_auth_required: bool,
+    /// User-authentication policy echoed from the request (KeyMint tags 504/505/502).
+    pub user_auth_type: i32,
+    pub auth_timeout: i32,
+    pub user_secure_id: i64,
 
     /// Calling app UID, used only to key diagnostic log lines to the requesting app.
     pub uid: i32,

@@ -52,6 +52,11 @@ data class CertGenConfig(
     val callerNonce: Boolean = false,
     val unlockedDeviceRequired: Boolean = false,
     val noAuthRequired: Boolean = true,
+    // User-authentication policy (KeyMint tags 504/505/502) echoed from the request so the
+    // forged record and key metadata mirror what a real TEE attests for auth-required keys.
+    val userAuthType: Int = 1,
+    val authTimeout: Int = 0,
+    val userSecureId: Long = -1,
     // Diagnostic plane: the calling app UID keys the native log lines, and debugLogging mirrors the
     // APK debug variant so the native extension dump is silent in release.
     val uid: Int,

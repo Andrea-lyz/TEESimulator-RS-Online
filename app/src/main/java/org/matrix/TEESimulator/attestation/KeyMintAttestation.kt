@@ -55,6 +55,9 @@ data class KeyMintAttestation(
     val trustedUserPresenceRequired: Boolean?,
     val trustedConfirmationRequired: Boolean?,
     val noAuthRequired: Boolean?,
+    val userAuthType: Int? = null,
+    val authTimeout: Int? = null,
+    val userSecureId: Long? = null,
     val maxUsesPerBoot: Int?,
     val maxBootLevel: Int?,
     val minMacLength: Int?,
@@ -132,6 +135,9 @@ data class KeyMintAttestation(
         trustedUserPresenceRequired = params.findBoolean(Tag.TRUSTED_USER_PRESENCE_REQUIRED),
         trustedConfirmationRequired = params.findBoolean(Tag.TRUSTED_CONFIRMATION_REQUIRED),
         noAuthRequired = params.findBoolean(Tag.NO_AUTH_REQUIRED),
+        userAuthType = params.findInteger(Tag.USER_AUTH_TYPE),
+        authTimeout = params.findInteger(Tag.AUTH_TIMEOUT),
+        userSecureId = params.findLongInteger(Tag.USER_SECURE_ID)?.toLong(),
         maxUsesPerBoot = params.findInteger(Tag.MAX_USES_PER_BOOT),
         maxBootLevel = params.findInteger(Tag.MAX_BOOT_LEVEL),
         minMacLength = params.findInteger(Tag.MIN_MAC_LENGTH),
@@ -195,7 +201,7 @@ private fun Array<KeyParameter>.findAllDigests(tag: Int): List<Int> =
     this.filter { it.tag == tag }.map { it.value.digest }
 
 private fun Array<KeyParameter>.findBoolean(tag: Int): Boolean? =
-    if (this.any { it.tag == tag }) true else null
+    this.find { it.tag == tag }?.value?.boolValue
 
 private fun Array<KeyParameter>.deriveKeySizeFromCurve(): Int {
     val curveId = this.find { it.tag == Tag.EC_CURVE }?.value?.ecCurve ?: return 0
