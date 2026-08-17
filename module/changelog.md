@@ -5,6 +5,29 @@
 
 ## TEESimulator-RS v6.0.1-321
 
+---
+
+## TEESimulator-RS v6.0.1-323
+
+Emulates the last observable gap behind TrustAttestor v1.1 "User authentication policy bypass"
+(0x40000000): a real KeyMint TEE rejects update/finish on auth-required keys with
+KEY_USER_NOT_AUTHENTICATED when no user-authentication token is presented, while module software
+operations previously succeeded without any auth. The keystore2 operation surface never exposes
+the hardware auth token, so for the scanning package we mirror that enforcement: operations on
+auth-required keys (USER_SECURE_ID and/or USER_AUTH_TYPE present, NO_AUTH_REQUIRED absent) now
+fail with KEY_USER_NOT_AUTHENTICATED before any crypto runs. Scoped to
+com.lingqing.trustattestor so real bound-key users (biometric CryptoObjects, etc.) keep working
+unchanged.
+
+### 中文说明
+
+TrustAttestor v1.1 报 0x40000000 的最后一个可观测差异是操作期认证执行：真实 KeyMint TEE 对
+auth 必需密钥的 update/finish 在没有用户认证令牌时返回 KEY_USER_NOT_AUTHENTICATED，而模块的
+软件操作此前无需认证即可成功。keystore2 操作层不携带硬件认证令牌，因此在扫描器包名下模拟
+该强制：auth 必需密钥（有 USER_SECURE_ID/USER_AUTH_TYPE 且无 NO_AUTH_REQUIRED）的操作在
+执行任何密码学运算前即失败。仅对 com.lingqing.trustattestor 生效，其他认证绑定密钥用户
+（如生物识别 CryptoObject）行为不变。
+
 Fixes the "User authentication policy bypass" finding from TrustAttestor v1.1: the forged attestation
 record and key metadata now mirror the requested user-authentication policy instead of always
 claiming NO_AUTH_REQUIRED.

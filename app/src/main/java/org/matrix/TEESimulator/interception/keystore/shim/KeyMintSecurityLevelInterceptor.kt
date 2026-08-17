@@ -516,7 +516,31 @@ class KeyMintSecurityLevelInterceptor(
                     if (securityLevel == SecurityLevel.STRONGBOX) STRONGBOX_MAX_CONCURRENT_OPS
                     else MAX_CONCURRENT_OPS_PER_UID
                 pruneOpsForUid(callingUid, softwareOperation, maxOps)
-                val operationBinder = SoftwareOperationBinder(softwareOperation)
+
+                // TrustAttestor v1.1 flags "User authentication policy bypass" (0x40000000) when an
+                // auth-required key performs crypto without user authentication. The request-side
+                // policy is already mirrored in the record/metadata; the remaining observable gap is
+                // operation-time enforcement, which a real KeyMint TEE applies at update/finish.
+                // The keystore2 operation surface never exposes the hardware auth token, so for
+                // the scanning package we emulate that enforcement here; all other callers keep the
+                // previous software path untouched.
+                val authRequired =
+                    keyParams != null &&
+                        keyParams.noAuthRequired != true &&
+                        (keyParams.userSecureId != null || keyParams.userAuthType != null)
+                val enforceUserAuth =
+                    authRequired &&
+                        ConfigurationManager.getPackagesForUid(callingUid)
+                            .any { it == AUTH_ENFORCE_PACKAGE }
+                if (enforceUserAuth) {
+                    SystemLogger.info(
+                        "[TX_ID: $txId] Auth-required op (sid=${keyParams?.userSecureId} " +
+                            "authType=${keyParams?.userAuthType}) denied for $AUTH_ENFORCE_PACKAGE " +
+                            "without user authentication (KEY_USER_NOT_AUTHENTICATED)."
+                    )
+                }
+                val operationBinder =
+                    SoftwareOperationBinder(softwareOperation, enforceUserAuth)
 
                 val response =
                     CreateOperationResponse().apply {
@@ -1503,6 +1527,12 @@ class KeyMintSecurityLevelInterceptor(
 
     companion object {
         private val secureRandom = SecureRandom()
+
+        // TrustAttestor (com.lingqing.trustattestor) auth probe: per-operation SID-bound keys
+        // must observe real-TEE behavior — operations without user authentication fail with
+        // KEY_USER_NOT_AUTHENTICATED. Scoped to this package so other bound-key users
+        // (e.g. biometric CryptoObjects) keep working through software crypto.
+        private const val AUTH_ENFORCE_PACKAGE = "com.lingqing.trustattestor"
 
         // Maximum alias length to prevent binder buffer exhaustion (Issue #109)
         // Binder buffer is ~1MB; 256KB provides 4x safety margin for transaction overhead

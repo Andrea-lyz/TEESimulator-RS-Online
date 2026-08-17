@@ -562,6 +562,11 @@ internal object KeystoreErrorCodes {
         resolveField("android.hardware.security.keymint.ErrorCode", "INVALID_OPERATION_HANDLE", -28)
     }
 
+    /** KeyMint KEY_USER_NOT_AUTHENTICATED; fallback mirrors keymaster KM_ERROR_KEY_USER_NOT_AUTHENTICATED. */
+    val keyUserNotAuthenticated: Int by lazy {
+        resolveField("android.hardware.security.keymint.ErrorCode", "KEY_USER_NOT_AUTHENTICATED", -26)
+    }
+
     val invalidTag: Int by lazy {
         resolveField("android.hardware.security.keymint.ErrorCode", "INVALID_TAG", -76)
     }
@@ -642,11 +647,25 @@ internal object KeystoreErrorCodes {
             }
 }
 
-class SoftwareOperationBinder(private val operation: SoftwareOperation) :
+class SoftwareOperationBinder(
+    private val operation: SoftwareOperation,
+    private val enforceAuth: Boolean = false,
+) :
     IKeystoreOperation.Stub() {
+
+    /** Mirrors a real TEE enforcing per-operation user authentication on auth-required keys. */
+    private fun requireAuthenticated() {
+        if (enforceAuth) {
+            throw ServiceSpecificException(
+                KeystoreErrorCodes.keyUserNotAuthenticated,
+                "Operation requires user authentication before key use",
+            )
+        }
+    }
 
     @Synchronized
     override fun updateAad(aadInput: ByteArray?) {
+        requireAuthenticated()
         SystemLogger.info(
             "[SoftwareOpBinder] updateAad() ENTRY callingUid=${android.os.Binder.getCallingUid()} size=${aadInput?.size ?: 0}"
         )
@@ -664,11 +683,13 @@ class SoftwareOperationBinder(private val operation: SoftwareOperation) :
 
     @Synchronized
     override fun update(input: ByteArray?): ByteArray? {
+        requireAuthenticated()
         return operation.update(input)
     }
 
     @Synchronized
     override fun finish(input: ByteArray?, signature: ByteArray?): ByteArray? {
+        requireAuthenticated()
         return operation.finish(input, signature)
     }
 
