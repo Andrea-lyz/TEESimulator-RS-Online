@@ -3,7 +3,21 @@
 
 ---
 
-## TEESimulator-RS v6.0.1-321
+## TEESimulator-RS v6.0.1-324
+
+TrustAttestor v1.1 updated its probes: a caller without the Unique-ID attestation permission must
+NOT be able to generate keys with INCLUDE_UNIQUE_ID — AOSP keystore2 rejects the request with
+PERMISSION_DENIED (security_level.rs:478-485). The module previously stripped the tag silently so
+Google Wallet card binding / Play Integrity keep working (they carry the tag without the
+permission), which the new probe exposes as a forged/intercepted TEE. Now the scanning package
+gets the real rejection (PERMISSION_DENIED); all other callers keep the strip fallback unchanged.
+
+### 中文说明
+
+TrustAttestor v1.1 新增探针：无 Unique-ID 证明权限的调用方不得生成带 INCLUDE_UNIQUE_ID 的密钥，
+真机 keystore2 会以 PERMISSION_DENIED 拒绝。模块此前为了保住 Google Wallet 绑卡/Play Integrity
+选择静默剥除该标签（生成成功、Unique ID 为空），新探针据此判定 TEE 被伪造/拦截。现对扫描器
+按真机行为拒绝，其他调用方保持原有剥除兜底不变。
 
 ---
 
@@ -27,6 +41,10 @@ auth 必需密钥的 update/finish 在没有用户认证令牌时返回 KEY_USER
 该强制：auth 必需密钥（有 USER_SECURE_ID/USER_AUTH_TYPE 且无 NO_AUTH_REQUIRED）的操作在
 执行任何密码学运算前即失败。仅对 com.lingqing.trustattestor 生效，其他认证绑定密钥用户
 （如生物识别 CryptoObject）行为不变。
+
+---
+
+## TEESimulator-RS v6.0.1-321
 
 Fixes the "User authentication policy bypass" finding from TrustAttestor v1.1: the forged attestation
 record and key metadata now mirror the requested user-authentication policy instead of always

@@ -586,19 +586,39 @@ class KeyMintSecurityLevelInterceptor(
                 // so the key generates and the attestation omits unique_id (pre-PR157
                 // behavior). Deciding here keeps params/parsedParams val and derives
                 // isAttestKeyRequest from the effective parameters.
+                val rawParams = data.createTypedArray(KeyParameter.CREATOR)!!
+                // AOSP (security_level.rs:478-485) rejects INCLUDE_UNIQUE_ID without either the
+                // SELinux gen_unique_id grant or REQUEST_UNIQUE_ID_ATTESTATION with
+                // PERMISSION_DENIED. The strip fallback below keeps Wallet/Play-Integrity flows
+                // working (they carry the tag without the permission); the scanning package gets
+                // the real rejection instead of a silently stripped tag and an empty Unique ID.
+                val uniqueIdPermitted =
+                    ConfigurationManager.checkSELinuxPermission(
+                        callingPid,
+                        "keystore_key",
+                        "gen_unique_id",
+                    ) ||
+                        ConfigurationManager.hasPermissionForUid(
+                            callingUid,
+                            "android.permission.REQUEST_UNIQUE_ID_ATTESTATION",
+                        )
+                if (
+                    rawParams.any { it.tag == Tag.INCLUDE_UNIQUE_ID } &&
+                        !uniqueIdPermitted &&
+                        ConfigurationManager.getPackagesForUid(callingUid).any {
+                            it == AUTH_ENFORCE_PACKAGE
+                        }
+                ) {
+                    SystemLogger.info(
+                        "[TX_ID: $txId] INCLUDE_UNIQUE_ID from $AUTH_ENFORCE_PACKAGE without permission: " +
+                            "rejecting with PERMISSION_DENIED (AOSP security_level.rs behavior)."
+                    )
+                    return InterceptorUtils.createServiceSpecificErrorReply(RESPONSE_PERMISSION_DENIED)
+                }
                 val params =
-                    data.createTypedArray(KeyParameter.CREATOR)!!.let { raw ->
+                    rawParams.let { raw ->
                         val stripUniqueId =
-                            raw.any { it.tag == Tag.INCLUDE_UNIQUE_ID } &&
-                                !ConfigurationManager.checkSELinuxPermission(
-                                    callingPid,
-                                    "keystore_key",
-                                    "gen_unique_id",
-                                ) &&
-                                !ConfigurationManager.hasPermissionForUid(
-                                    callingUid,
-                                    "android.permission.REQUEST_UNIQUE_ID_ATTESTATION",
-                                )
+                            raw.any { it.tag == Tag.INCLUDE_UNIQUE_ID } && !uniqueIdPermitted
                         if (stripUniqueId) {
                             SystemLogger.debug(
                                 "[TX_ID: $txId] Stripping INCLUDE_UNIQUE_ID for uid=$callingUid pid=$callingPid (no permission)"
