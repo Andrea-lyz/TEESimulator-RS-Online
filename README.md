@@ -1,3 +1,12 @@
+# ⚠️ Please Use Ommega / 请使用 Ommega
+
+> [!IMPORTANT]
+> **English:** The concept envisioned by this project has now been fully realized by [Ommega](https://github.com/jiyin004-jpg/ommega). Ommega provides complete local keychain forwarding for spoofed-BL-unlocked devices and jailbroken devices, and has successfully achieved Google Play Integrity `STRONG_INTEGRITY`. Please use Ommega instead.
+>
+> **中文：** 本项目所预期实现的构想现已由 [Ommega](https://github.com/jiyin004-jpg/ommega) 完整落地。Ommega 可完整转发伪 BL 解锁设备和越狱设备的本地密钥链，并已成功达到 Google Play Integrity `STRONG_INTEGRITY` 等级。请大家直接使用 Ommega。
+
+---
+
 # TEESimulator-RS-Online
 
 **Remote attestation relay for Android devices** — forward hardware key attestation from a BL-locked device (Provider) to a BL-unlocked device (Consumer) over WebSocket.
